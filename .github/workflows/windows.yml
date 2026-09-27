@@ -52,25 +52,13 @@ jobs:
         with:
           workspaces: windows
 
-      # No `--locked`: this fork replaced two providers, so Cargo.toml no longer
-      # matches the committed lock. Letting cargo re-resolve it here is the only
-      # way the build can pick up `zstd` and drop `tiny_http` / `notify`.
+      # The lock was re-resolved when the two provider slots were replaced, and
+      # the result is committed, so the build is pinned to it again.
       - name: Build
-        run: cargo build
-
-      # The build above rewrote the lock. Hand it back so the re-resolved file
-      # can be committed and `--locked` turned on again; until that happens every
-      # run re-resolves from the registry and the build is not reproducible. Drop
-      # this step once Cargo.lock is current again.
-      - name: Offer the re-resolved lock
-        uses: actions/upload-artifact@v7
-        with:
-          name: Cargo.lock
-          path: windows/Cargo.lock
-          if-no-files-found: error
+        run: cargo build --locked
 
       - name: Test
-        run: cargo test
+        run: cargo test --locked
 
       - name: Test Codex headline selection
         run: node --test test-codex-headline.cjs
@@ -78,4 +66,4 @@ jobs:
       # Reported rather than enforced: the crate already carries warnings, and
       # failing on them would hold every change hostage to that cleanup.
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets --locked

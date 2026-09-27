@@ -110,6 +110,41 @@ against its size and mtime, and a file last written before the window is skipped
 without being opened, because records are appended and can never be newer than the
 file that holds them.
 
+### DeepSeek Harness sessions
+
+Nothing to sign in to and nothing to configure. Its sessions live under `$DSH_HOME`, or
+`~/.dsh` when that is unset — one directory per project, one per session inside it, holding
+`session.jsonl`, or `session.v3.jsonl` when a generation has rewritten the format, with a
+`.zstd` suffix where the writer compresses. Only those names are read: a
+`session.summary.jsonl` or a `.bak` beside them is not a transcript.
+
+The three windows are counts, not shares: tokens today, in the last seven days and in the
+last thirty. There is no allowance to divide by, so the ring draws its track undrawn and the
+cell prints the figure. Records older than thirty-one days are dropped on the way in, so a
+session running since spring costs one pass over the file rather than a growing sum.
+
+Three details of the format change the number, so they are worth stating:
+
+- **Reasoning is inside output, not beside it.** DSH reports `outputTokens` inclusive of
+  reasoning, so subtracting reasoning would under-count every reasoning-heavy session by
+  exactly its reasoning tokens. The total is `input + output + cacheRead + cacheWrite`.
+- **A replayed record is not a second charge.** The writer can re-append a record it already
+  flushed. Records are de-duplicated on message identity, time, routing and the token
+  signature, so a replay folds to one charge.
+- **A forked session is not charged for its parent.** A fork's log opens with a copy of the
+  parent's events, and the log says where the copy ends: a legacy header carries
+  `seedLength`, a current one carries `isSeeded` and puts the cut on the *last*
+  `session/end-seed` whose data says `inherited: true`. Either way the cut is a seq number —
+  the first event the child itself owns — and everything strictly below it is dropped. Two
+  cases look alike and are not: a seeded log with no end-seed marker anywhere cannot say
+  where its copy ended, and that session is charged nothing rather than billing the parent's
+  prefix to the child; a marker that is present but untagged has declared outright that
+  nothing was inherited, so its history stands and is counted.
+
+A transcript the writer is midway through looks truncated, and that is normal: the harness
+appends one Zstandard frame per flush, so frame boundaries are located without decompressing
+the file and only the half-written frame at the cut is dropped.
+
 ### Antigravity
 
 - **Official CLI (Preferred)**: When the official Antigravity CLI (`agy.exe`) is installed (`%LOCALAPPDATA%\agy\bin\agy.exe` or on `PATH`) and signed in, Codenotch reads official quotas directly without keeping the full IDE running.
@@ -125,9 +160,18 @@ shows an error or the last reading marked stale. Codenotch does not automate sig
 ## Install / build
 
 Download [`Codenotch-Setup.exe`](https://github.com/vinzdg/codenotch/releases/latest/download/Codenotch-Setup.exe)
-from the latest release. It installs for the current user without administrator rights and fetches
+from the latest upstream release. It installs for the current user without administrator rights and fetches
 WebView2 if Windows does not already have it. The installer is not code-signed, so SmartScreen
 stops it the first time with *Windows protected your PC*: choose **More info**, then **Run anyway**.
+
+### Building this fork
+
+This fork publishes no releases, so the download link above does not carry its installer.
+Both Windows workflows build on any push touching `windows/**`, and either can be started by
+hand with **Run workflow** on the Actions tab. The manual entry point exists because
+`tauri build` compiles the binary only and never the `#[cfg(test)]` targets, so the unit
+tests would otherwise never run. The packaging job leaves `Codenotch-Setup.exe` on the run
+as an artifact.
 
 ### Updates
 

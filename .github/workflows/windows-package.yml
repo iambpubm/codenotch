@@ -73,9 +73,9 @@ jobs:
           if ($env:SIGNED -eq 'true') {
             $cliArgs += @('--config', '{"bundle":{"createUpdaterArtifacts":true}}')
           }
-          # No `--locked`: the provider swap left Cargo.lock stale, and the
-          # bundler refuses to build when the lock disagrees with Cargo.toml.
-          npx --yes @tauri-apps/cli@2.11.4 build @cliArgs
+          # `--locked`, as upstream: the lock was re-resolved for the provider
+          # swap and the result is committed.
+          npx --yes @tauri-apps/cli@2.11.4 build @cliArgs -- --locked
 
       # The bundler names the file after the version, which would change the
       # URL every release. One fixed name lets the README link to
