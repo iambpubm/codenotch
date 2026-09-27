@@ -58,6 +58,17 @@ jobs:
       - name: Build
         run: cargo build
 
+      # The build above rewrote the lock. Hand it back so the re-resolved file
+      # can be committed and `--locked` turned on again; until that happens every
+      # run re-resolves from the registry and the build is not reproducible. Drop
+      # this step once Cargo.lock is current again.
+      - name: Offer the re-resolved lock
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cargo.lock
+          path: windows/Cargo.lock
+          if-no-files-found: error
+
       - name: Test
         run: cargo test
 
