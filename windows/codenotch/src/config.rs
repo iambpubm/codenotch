@@ -324,16 +324,20 @@ pub fn load() -> Config {
 /// Harness. A config saved before that keeps its rings in the same places rather than losing them,
 /// and a duplicate that the rename creates (say `workbuddy` was already ticked) is dropped.
 fn migrate_replaced_providers(cfg: &mut Config) {
-    let rename = |id: &str| match id {
-        "claude" => "workbuddy",
-        "grok" => "dsh",
-        other => other,
-    };
+    // A plain `fn`, not a closure: a closure that hands back a borrow of its own
+    // argument has no way to tie the two lifetimes together, and rustc refuses it.
+    fn renamed(id: &str) -> &str {
+        match id {
+            "claude" => "workbuddy",
+            "grok" => "dsh",
+            other => other,
+        }
+    }
     for p in cfg.notch_providers.iter_mut() {
-        *p = rename(p).to_string();
+        *p = renamed(p).to_string();
     }
     for s in cfg.notch_slots.iter_mut() {
-        s.provider = rename(&s.provider).to_string();
+        s.provider = renamed(&s.provider).to_string();
     }
     dedupe_slots(&mut cfg.notch_slots);
     dedupe_providers(&mut cfg.notch_providers);

@@ -248,7 +248,7 @@ pub fn run() -> String {
                             logs += 1;
                             if let Ok(m) = f.metadata() {
                                 total += m.len();
-                                if let Ok(t) = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()) {
+                                if let Some(t) = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()) {
                                     newest = newest.max(t.as_millis() as u64);
                                 }
                             }

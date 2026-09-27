@@ -13,6 +13,10 @@ on:
     paths:
       - 'windows/**'
       - '.github/workflows/windows.yml'
+  # Added by this fork. `tauri build` compiles the binary only, so the unit
+  # tests never get built by the packaging job; a manual entry point is the
+  # only way to run `cargo test` here.
+  workflow_dispatch:
 
 jobs:
   build:

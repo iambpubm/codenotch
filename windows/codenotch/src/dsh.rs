@@ -676,9 +676,11 @@ pub fn start(app: AppHandle) {
             }
         }
         loop {
+            // Same shape as every other provider's loop: the guard drops before `st`.
             let prev = {
                 let st = app.state::<AppState>();
-                st.dsh.lock().unwrap().clone()
+                let held = st.dsh.lock().unwrap().clone();
+                held
             };
             let snap = read_once(&prev, &mut cache);
             broadcast(&app, snap);

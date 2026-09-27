@@ -241,7 +241,7 @@ fn is_encrypted_field(value: Option<&serde_json::Value>) -> bool {
 
 /// Session-or-reason, the single parse both the reader and `doctor` go through. Kept pure so every
 /// branch is testable without a file, a clock or a network.
-pub fn inspect_session(value: &serde_json::Value, now: u64) -> (Option<Session>, Option<ReadReason>) {
+pub fn inspect_session(value: &serde_json::Value, _now: u64) -> (Option<Session>, Option<ReadReason>) {
     let Some(root) = value.as_object() else {
         return (None, Some(ReadReason::Malformed));
     };
@@ -799,9 +799,13 @@ pub fn start(app: AppHandle) {
             }
         }
         loop {
+            // The guard is held in a local rather than returned as a trailing
+            // expression: a trailing temporary lives until the end of the block,
+            // which is after `st` is dropped, and the borrow checker rejects that.
             let prev = {
                 let st = app.state::<AppState>();
-                st.workbuddy.lock().unwrap().clone()
+                let held = st.workbuddy.lock().unwrap().clone();
+                held
             };
             let snap = read_once(&prev, &mut tokens);
             if snap.status == "error" || snap.status == "stale" {
