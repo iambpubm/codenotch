@@ -43,6 +43,11 @@ jobs:
       - name: Test Korean card localization
         run: node --test scripts/test-ko-i18n.cjs
 
+      # The reading under each ring sits in a fixed-width pill; a long token total used to be clipped
+      # by its edge, so the compact form it now carries is held to a width the pill can actually take.
+      - name: Test the pill reading width
+        run: node --test test-count-format.cjs
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

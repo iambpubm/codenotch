@@ -88,7 +88,9 @@
   .glyph img.appicon{width:calc(30px * var(--k));height:calc(30px * var(--k));border-radius:calc(8px * var(--k));object-fit:cover}
   .c-head .mark{display:inline-block;width:16px;height:16px;color:var(--ink-2);margin-right:2px}
   .c-head .mark svg{width:16px;height:16px;fill:currentColor}
-  .pct{font-size:15px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+  /* nowrap so an unexpectedly long reading cannot fold the pill into two lines; `compactCount` keeps it
+     inside the 70 px body, so this never actually hides anything. */
+  .pct{font-size:15px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
   .dim{opacity:.55}
   /* A stale reading dims the reading only. The track, the week and the glyph are all saying the same
      old thing, but whether an agent is running right now is current either way, so the activity arc
@@ -339,6 +341,25 @@ function smallPct(v){
   return t.toFixed(1);
 }
 function pctText(f){ const v=f*100; return v>0&&v<1?smallPct(v):String(Math.round(v)); }
+// A count window is unbounded where a percentage stops at 100, so the pill under the ring would take
+// whatever width the number asks for — and `#pill` is a fixed 70 px, with the ring itself 44 of it.
+// `~1583864` measures about 71 px in the 15 px tabular figures and the tail was simply cut off. Three
+// significant figures cap the text at five characters (+ the tilde), which clears the ring's own width
+// in every language; the card below prints the exact number, so nothing is actually withheld.
+// BEGIN TESTABLE COUNT FORMAT SELECTOR
+function compactCount(n){
+  if(!(n>0)) return '0';
+  if(n<1000) return String(Math.round(n));
+  const units=['K','M','G','T'];
+  let v=n, i=-1;
+  while(v>=1000 && i<units.length-1){ v/=1000; i++; }
+  let s=+v.toPrecision(3); // `+` drops trailing zeros: 1.00M reads as 1M
+  if(s>=1000 && i<units.length-1){ s=1; i++; } // 999 999 rounds to 1000K, which is 1M
+  return s+units[i];
+}
+// The card has room for the whole figure, and a grouped one is legible where seven bare digits are not
+function thousands(n){ return Math.round(n).toLocaleString('en-US'); }
+// END TESTABLE COUNT FORMAT SELECTOR
 // Both ends, since vendors disagree on which they print; the left half comes from the rounded used half, as their dashboards do
 function usedCopy(w){
   const v=w.used*100;
@@ -1147,7 +1168,7 @@ function renderRing(){
       else activity.innerHTML='';
     }
     if(p.snap.status==='needsAuth'||p.snap.status==='none') pct.textContent='—';
-    else if(h && h.count!=null) pct.textContent='~'+h.count;
+    else if(h && h.count!=null) pct.textContent='~'+compactCount(h.count);
     else if(h) pct.textContent=(h.derived?'~':'')+pctText(h.used)+'%';
     else pct.textContent=p.snap.windows.length?'—':'…'; // its declared window is missing: a dash, not a wait
     glyph.classList.toggle('dim', !!(h && h.used>=1));
@@ -1212,10 +1233,11 @@ function renderCard(){
       }
       if(w.count!=null){
         // A count window has no denominator. `unit` says what is being counted — Antigravity counts
-        // requests, DeepSeek Harness counts tokens — and only the wording changes.
+        // requests, DeepSeek Harness counts tokens — and only the wording changes. Grouped digits keep
+        // a seven-figure token total readable; `compactCount` below is for the pill, where width is fixed.
         const unit=w.unit==='tokens'?'token':'request';
         html+=`<div class="win"><div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span></div>
-          <div class="w-used">${w.count>0?`~${w.count} ${textCopy(w.count===1?unit+' today':unit+'s today')}`:textCopy('no '+unit+'s today')}</div></div>`;
+          <div class="w-used">${w.count>0?`~${thousands(w.count)} ${textCopy(w.count===1?unit+' today':unit+'s today')}`:textCopy('no '+unit+'s today')}</div></div>`;
         continue;
       }
       html+=`<div class="win">
