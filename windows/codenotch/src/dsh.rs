@@ -758,13 +758,19 @@ mod tests {
         })
     }
 
-    const T: u64 = 1_760_000_000_000;
+    /// One instant, frozen at first use and always inside the retention window.
+    /// A hard-coded timestamp ages out of `KEEP_DAYS`, and every fold test in this
+    /// module then fails for a reason that has nothing to do with what it asserts.
+    fn t() -> u64 {
+        static INIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        *INIT.get_or_init(now_ms)
+    }
 
     #[test]
     fn a_reply_contributes_its_tokens_to_the_day_it_happened() {
-        let text = vec![header(serde_json::json!({})), line(reply(1, T, "m-1", 100, 40))].join("\n");
+        let text = vec![header(serde_json::json!({})), line(reply(1, t(), "m-1", 100, 40))].join("\n");
         let days = fold_transcript(&text);
-        assert_eq!(days.get(&local_day(T)), Some(&140));
+        assert_eq!(days.get(&local_day(t())), Some(&140));
         assert_eq!(days.len(), 1);
     }
 
@@ -775,11 +781,11 @@ mod tests {
         let record = serde_json::json!({
             "type": "assistant/message",
             "seq": 1,
-            "time": T,
+            "time": t(),
             "data": { "usage": { "inputTokens": 10, "outputTokens": 50, "reasoningTokens": 30 } }
         });
         let text = vec![header(serde_json::json!({})), line(record)].join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&60));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&60));
     }
 
     #[test]
@@ -787,26 +793,26 @@ mod tests {
         let record = serde_json::json!({
             "type": "assistant/message",
             "seq": 1,
-            "time": T,
+            "time": t(),
             "data": { "usage": {
                 "inputTokens": 1, "outputTokens": 2, "cacheReadTokens": 3, "cacheWriteTokens": 4
             } }
         });
         let text = vec![header(serde_json::json!({})), line(record)].join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&10));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
     }
 
     /// The writer can re-append a line it already flushed; that is not a second charge.
     #[test]
     fn a_replayed_record_is_counted_once() {
-        let duplicate = reply(1, T, "m-1", 100, 40);
+        let duplicate = reply(1, t(), "m-1", 100, 40);
         let text = vec![
             header(serde_json::json!({})),
             line(duplicate.clone()),
             line(duplicate),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&140));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&140));
     }
 
     /// A forked session's log opens with a copy of its parent's events; those are the parent's.
@@ -814,26 +820,26 @@ mod tests {
     fn a_legacy_seed_length_hides_the_inherited_prefix() {
         let text = vec![
             header(serde_json::json!({ "seedLength": 2 })),
-            line(reply(1, T, "parent-1", 100, 40)),
-            line(reply(2, T, "parent-2", 100, 40)),
-            line(reply(3, T, "child-1", 7, 3)),
+            line(reply(1, t(), "parent-1", 100, 40)),
+            line(reply(2, t(), "parent-2", 100, 40)),
+            line(reply(3, t(), "child-1", 7, 3)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&10));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
     }
 
     #[test]
     fn a_tagged_end_seed_hides_the_inherited_prefix() {
         let text = vec![
             header(serde_json::json!({ "isSeeded": true })),
-            line(reply(1, T, "parent-1", 100, 40)),
+            line(reply(1, t(), "parent-1", 100, 40)),
             line(serde_json::json!({
-                "type": "session/end-seed", "seq": 2, "time": T, "data": { "inherited": true }
+                "type": "session/end-seed", "seq": 2, "time": t(), "data": { "inherited": true }
             })),
-            line(reply(3, T, "child-1", 7, 3)),
+            line(reply(3, t(), "child-1", 7, 3)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&10));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
     }
 
     /// An untagged end-seed is an ordinary resume boundary: it must never hide real history.
@@ -841,20 +847,20 @@ mod tests {
     fn an_untagged_end_seed_hides_nothing() {
         let text = vec![
             header(serde_json::json!({ "isSeeded": true })),
-            line(reply(1, T, "m-1", 100, 40)),
+            line(reply(1, t(), "m-1", 100, 40)),
             line(serde_json::json!({
-                "type": "session/end-seed", "seq": 2, "time": T, "data": { "inherited": false }
+                "type": "session/end-seed", "seq": 2, "time": t(), "data": { "inherited": false }
             })),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&140));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&140));
     }
 
     /// A seeded header with no readable cut cannot say what it owns, so it charges nothing rather
     /// than charging the copied parent prefix to the child.
     #[test]
     fn a_seeded_header_without_its_marker_charges_nothing() {
-        let text = vec![header(serde_json::json!({ "isSeeded": true })), line(reply(1, T, "m-1", 100, 40))]
+        let text = vec![header(serde_json::json!({ "isSeeded": true })), line(reply(1, t(), "m-1", 100, 40))]
             .join("\n");
         assert!(fold_transcript(&text).is_empty());
     }
@@ -865,14 +871,14 @@ mod tests {
         let record = serde_json::json!({
             "type": "assistant/attempt",
             "seq": 1,
-            "time": T,
+            "time": t(),
             "data": { "stream": [
                 { "chunk": { "type": "text", "usage": null } },
                 { "chunk": { "type": "usage", "usage": { "inputTokens": 5, "outputTokens": 6 } } }
             ] }
         });
         let text = vec![header(serde_json::json!({})), line(record)].join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&11));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&11));
     }
 
     #[test]
@@ -889,16 +895,16 @@ mod tests {
             header(serde_json::json!({})).as_str(),
             "not json at all",
             "",
-            &line(serde_json::json!({ "type": "user/message", "seq": 1, "time": T, "data": {} })),
-            &line(reply(2, T, "m-1", 1, 1)),
+            &line(serde_json::json!({ "type": "user/message", "seq": 1, "time": t(), "data": {} })),
+            &line(reply(2, t(), "m-1", 1, 1)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(T)), Some(&2));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&2));
     }
 
     #[test]
     fn a_zero_token_event_is_not_a_reading() {
-        let text = vec![header(serde_json::json!({})), line(reply(1, T, "m-1", 0, 0))].join("\n");
+        let text = vec![header(serde_json::json!({})), line(reply(1, t(), "m-1", 0, 0))].join("\n");
         assert!(fold_transcript(&text).is_empty());
     }
 

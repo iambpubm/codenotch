@@ -395,7 +395,9 @@ mod tests {
         let by_id = |id: &str| w.iter().find(|x| x.id == id).cloned();
         assert_eq!(by_id("today").unwrap().count, Some(10));
         assert_eq!(by_id("week").unwrap().count, Some(60));
-        assert_eq!(by_id("month").unwrap().count, Some(110));
+        // today, -1, -6, -7 and -29 all fall inside the thirty-day span; the -30
+        // entry is the one it deliberately leaves out.
+        assert_eq!(by_id("month").unwrap().count, Some(150));
         assert_eq!(by_id("today").unwrap().unit.as_deref(), Some("tokens"));
         assert_eq!(by_id("today").unwrap().used, 0.0);
     }
