@@ -34,10 +34,15 @@
 //!   - **A replayed line is not a second charge.** dsh's writer can re-append an already-flushed
 //!     record, so records are deduped on message identity + time + routing + token signature.
 //!   - **A forked session must not be charged for its parent.** Its log opens with a byte-for-byte
-//!     copy of the parent's events. Legacy headers state the cut as `seedLength`; current headers
-//!     carry `isSeeded: true` and put the exact cut on the *last* `session/end-seed` marker whose
-//!     data says `inherited: true`. An untagged `end-seed` is an ordinary resume boundary and never
-//!     hides history.
+//!     copy of the parent's events, and the log says where the copy ends. A legacy header states the
+//!     cut as `seedLength`; a current header carries `isSeeded: true` and puts it on the *last*
+//!     `session/end-seed` marker whose data says `inherited: true`. Either way the cut is a seq
+//!     number: the first event the child itself owns. Every event strictly below it is the parent's
+//!     and is dropped; the event *on* it is charged.
+//!   - **Silence and denial are different answers.** A seeded log that carries no `end-seed` marker
+//!     at all cannot say where its copy ended, so the whole session is charged nothing rather than
+//!     billing the parent's prefix to the child. An `end-seed` that is present but not tagged
+//!     `inherited` has declared outright that nothing was inherited, so its history stands.
 //!   - **A torn tail is normal, not an error.** The harness appends one Zstandard frame per flush,
 //!     so a transcript scanned mid-write routinely ends in a half-written frame. Frame boundaries
 //!     are located without decompressing (`scan_zstd_frames`), so the complete frames are kept and
@@ -395,6 +400,7 @@ fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
     let mut seed_length: Option<i64> = None;
     let mut is_seeded = false;
     let mut tagged_cut: Option<i64> = None;
+    let mut seed_boundary_seen = false;
     let mut events: Vec<UsageEvent> = Vec::new();
 
     for (index, line) in text.lines().enumerate() {
@@ -415,14 +421,17 @@ fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
                 }
             }
             "session/end-seed" => {
+                // Present at all, whether or not it is tagged, is information: it means this log
+                // states a seeding outcome, so a `false` here outranks the header's lineage bit.
+                seed_boundary_seen = true;
                 let inherited = data
                     .and_then(|d| d.get("inherited"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 if inherited {
                     // A fork can inherit an ancestor's tagged marker, so only the last one counts.
-                    if record.get("seq").and_then(|s| s.as_i64()).is_some() {
-                        tagged_cut = record.get("seq").and_then(|s| s.as_i64());
+                    if let Some(seq) = record.get("seq").and_then(|s| s.as_i64()) {
+                        tagged_cut = Some(seq);
                     }
                 }
             }
@@ -473,22 +482,24 @@ fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
         }
     }
 
-    // v0 persisted the exact inherited-prefix length on the header; current generations keep only
-    // the lineage bit there and project the cut into the log. Untagged end-seed markers are resume
-    // lifecycle boundaries and must never hide history in an unseeded session.
+    // v0 persisted the cut on the header as `seedLength`; current generations keep only the lineage
+    // bit there and project the cut into the log as a tagged end-seed. Both name the same thing: the
+    // seq of the first event the child itself owns.
     let mut inherited_cut = seed_length;
-    let needs_tagged_cut = inherited_cut.is_none() && is_seeded;
-    if needs_tagged_cut {
+    if inherited_cut.is_none() && is_seeded {
         inherited_cut = tagged_cut;
     }
+    // A seeded header with no cut anywhere in the log cannot separate the copied parent prefix from
+    // the child's own work. Charging everything would bill the parent's tokens to the child, so such
+    // a session is charged nothing. A log that does carry an end-seed marker is not in this position
+    // — an untagged one says outright that nothing was inherited.
+    let cut_unknowable = is_seeded && inherited_cut.is_none() && !seed_boundary_seen;
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut days: BTreeMap<i32, u64> = BTreeMap::new();
     for event in events {
         let cut_applies = header_index.map(|h| event.record_index > h).unwrap_or(false);
-        // A seeded header whose tagged marker cannot be read means ownership cannot be recovered;
-        // the safe answer is no charge at all rather than charging the copied parent prefix.
-        if cut_applies && needs_tagged_cut && inherited_cut.is_none() {
+        if cut_applies && cut_unknowable {
             continue;
         }
         if cut_applies {
@@ -815,9 +826,26 @@ mod tests {
         assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&140));
     }
 
-    /// A forked session's log opens with a copy of its parent's events; those are the parent's.
+    /// A forked session's log opens with a copy of its parent's events; those are the parent's. The
+    /// legacy header states the cut as a seq, so `seedLength: 3` drops the two parent replies and
+    /// leaves the child's own.
     #[test]
-    fn a_legacy_seed_length_hides_the_inherited_prefix() {
+    fn a_legacy_seed_cut_hides_the_inherited_prefix() {
+        let text = vec![
+            header(serde_json::json!({ "seedLength": 3 })),
+            line(reply(1, t(), "parent-1", 100, 40)),
+            line(reply(2, t(), "parent-2", 100, 40)),
+            line(reply(3, t(), "child-1", 7, 3)),
+        ]
+        .join("\n");
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
+    }
+
+    /// The cut is exclusive — the event whose seq equals it is the child's own and is charged, and
+    /// only the events below it are dropped. Read as an event count instead, `seedLength: 2` would
+    /// swallow the child's first reply and report 10 rather than 150.
+    #[test]
+    fn the_seed_cut_leaves_the_event_on_it_charged() {
         let text = vec![
             header(serde_json::json!({ "seedLength": 2 })),
             line(reply(1, t(), "parent-1", 100, 40)),
@@ -825,7 +853,7 @@ mod tests {
             line(reply(3, t(), "child-1", 7, 3)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
+        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&150));
     }
 
     #[test]
@@ -842,7 +870,8 @@ mod tests {
         assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
     }
 
-    /// An untagged end-seed is an ordinary resume boundary: it must never hide real history.
+    /// An untagged end-seed is this log stating that nothing was inherited. It is not a cut, so the
+    /// history above it is real and belongs to this session.
     #[test]
     fn an_untagged_end_seed_hides_nothing() {
         let text = vec![
@@ -856,8 +885,10 @@ mod tests {
         assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&140));
     }
 
-    /// A seeded header with no readable cut cannot say what it owns, so it charges nothing rather
-    /// than charging the copied parent prefix to the child.
+    /// A seeded header whose log never says where the copy ended cannot say what it owns, so it
+    /// charges nothing rather than charging the copied parent prefix to the child. This is the
+    /// counterpart of `an_untagged_end_seed_hides_nothing`: a log that is silent and a log that
+    /// denies inheritance outright are two different answers, and only the silent one is refused.
     #[test]
     fn a_seeded_header_without_its_marker_charges_nothing() {
         let text = vec![header(serde_json::json!({ "isSeeded": true })), line(reply(1, t(), "m-1", 100, 40))]

@@ -390,17 +390,6 @@ fn pick_array<'a>(source: &'a serde_json::Value, paths: &[&[&str]]) -> Option<&'
     None
 }
 
-fn account_identity(source: &serde_json::Value) -> String {
-    match pick_value(
-        source,
-        &["AccountId", "accountId", "UserId", "userId", "Uid", "uid", "TenantId", "tenantId"],
-    ) {
-        Some(serde_json::Value::String(s)) => s.trim().to_string(),
-        Some(other) => other.to_string(),
-        None => String::new(),
-    }
-}
-
 /// What one billing reply says about the spendable balance.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reading {
