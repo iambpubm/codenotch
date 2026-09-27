@@ -157,23 +157,22 @@ fn format_process_line(line: &str) -> Option<String> {
 }
 
 pub fn run() -> String {
-    let mut o = String::from("== doctor deep: working-state signal survey ==\n(run it while both the Codex desktop app and the Claude desktop app are working)\n\n");
+    let mut o = String::from("== doctor deep: working-state signal survey ==\n(run it while the Codex desktop app is working)\n\n");
     let home = dirs::home_dir().unwrap_or_default();
     let local = dirs::data_local_dir().unwrap_or_default();
 
     o += "## Files modified in the last 120 s\n";
     let mut recent = Vec::new();
     recent_files(&home.join(".codex"), 2, 120, &mut recent);
-    if let Ok(rd) = std::fs::read_dir(local.join("Packages")) {
-        for e in rd.flatten() {
-            let n = e.file_name().to_string_lossy().to_lowercase();
-            if n.contains("claude") || n.contains("anthropic") {
-                recent_files(&e.path().join("LocalCache").join("Roaming").join("Claude"), 3, 120, &mut recent);
-            }
-        }
+    // WorkBuddy's session file and its own data directory: what the WorkBuddy reading is built from
+    for root in [local.clone(), dirs::data_dir().unwrap_or_default()] {
+        recent_files(&root.join("CodeBuddyExtension").join("Data"), 3, 120, &mut recent);
     }
-    recent_files(&dirs::config_dir().unwrap_or_default().join("Claude"), 2, 120, &mut recent);
     recent_files(&dirs::config_dir().unwrap_or_default().join("Cursor").join("User").join("globalStorage"), 1, 120, &mut recent);
+    // DeepSeek Harness keeps its transcripts under its own home
+    if let Some(dsh) = crate::dsh::home() {
+        recent_files(&dsh, 3, 120, &mut recent);
+    }
     recent.sort();
     for (age, p) in recent.iter().take(60) {
         o += &format!("  {age:>4}s ago  {}\n", p.display());
@@ -222,6 +221,59 @@ pub fn run() -> String {
                     o += &format!("  {l}\n");
                 }
             }
+        }
+    }
+
+    // Structure only: session directory names are derived from working directories and can name a
+    // customer or a project, so nothing under DeepSeek Harness's own home is printed verbatim.
+    o += "\n## DeepSeek Harness session store (counts and sizes only, never a path)\n";
+    match crate::dsh::sessions_root() {
+        Some(root) if root.is_dir() => {
+            let mut dirs = 0usize;
+            let mut logs = 0usize;
+            let mut total = 0u64;
+            let mut newest = 0u64;
+            if let Ok(rd) = std::fs::read_dir(&root) {
+                for e in rd.flatten() {
+                    if !e.path().is_dir() {
+                        continue;
+                    }
+                    dirs += 1;
+                    if let Ok(inner) = std::fs::read_dir(e.path()) {
+                        for f in inner.flatten() {
+                            let name = f.file_name().to_string_lossy().to_lowercase();
+                            if !name.starts_with("session") || !(name.ends_with(".jsonl") || name.ends_with(".jsonl.zstd")) {
+                                continue;
+                            }
+                            logs += 1;
+                            if let Ok(m) = f.metadata() {
+                                total += m.len();
+                                if let Ok(t) = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()) {
+                                    newest = newest.max(t.as_millis() as u64);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            o += &format!("  {dirs} session directories, {logs} transcripts, {} KiB in total\n", total / 1024);
+            if newest > 0 {
+                o += &format!("  newest transcript written {}s ago\n", now_ms().saturating_sub(newest) / 1000);
+            }
+        }
+        _ => o += "  (no sessions directory — DeepSeek Harness has not run here)\n",
+    }
+
+    // Counts and sizes only, for the same reason: a project directory is an encoded working path,
+    // which can name a customer or a project, so nothing under WorkBuddy's own home is printed.
+    o += "\n## WorkBuddy session store (counts and sizes only, never a path)\n";
+    if !crate::workbuddy_tokens::present() {
+        o += "  (no projects directory under ~/.workbuddy or ~/.workbuddy-ai)\n";
+    } else {
+        let (projects, logs, bytes, newest) = crate::workbuddy_tokens::survey();
+        o += &format!("  {projects} project directories, {logs} transcripts, {} KiB in total\n", bytes / 1024);
+        if newest > 0 {
+            o += &format!("  newest transcript written {}s ago\n", now_ms().saturating_sub(newest) / 1000);
         }
     }
     o

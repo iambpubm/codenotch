@@ -22,9 +22,10 @@ on:
 
 jobs:
   package:
-    # workflow_dispatch is let through so a fork can try the installer before
-    # opening a pull request; every other trigger only runs here.
-    if: github.repository == 'vinzdg/codenotch' || github.event_name == 'workflow_dispatch'
+    # Upstream gated this on its own repository name, which would skip the job
+    # outright in this fork on a push. Only a stranger's pull request is held
+    # back now, so a push to main and a manual run both produce an installer.
+    if: github.event_name != 'pull_request'
     name: NSIS installer
     # Only the release step writes anything; `gh release upload` fails without it.
     permissions:
@@ -45,17 +46,6 @@ jobs:
         with:
           workspaces: windows
 
-      # Its own target dir for two reasons. The bundler copies resources next to
-      # the app in target/release, so a hook built there would be copied onto
-      # itself. And Claude Code runs the hook on machines that may have no
-      # vcruntime140.dll, so it carries its C runtime; changing RUSTFLAGS in the
-      # shared target dir would rebuild the app's whole dependency tree.
-      # The app needs no flag: tauri-build already links the runtime statically.
-      - name: Build the hook
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release --locked -p codenotch-hook --target-dir target/hook
-
       # The signing key is what the updater in an already-installed copy checks the
       # download against. Asking the bundler for updater artifacts without one is a
       # hard error, not a warning, so the artifacts are switched on here rather than
@@ -72,8 +62,6 @@ jobs:
             Write-Host '::warning::TAURI_SIGNING_PRIVATE_KEY is not set - building an installer with no update feed.'
           }
 
-      # tauri.bundle.conf.json is merged only here, so a plain `cargo build`
-      # never looks for a hook binary that has not been built.
       - name: Build the installer
         working-directory: windows/codenotch
         env:
@@ -81,14 +69,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           SIGNED: ${{ steps.signing.outputs.signed }}
         run: |
-          # Not $args: that is a PowerShell automatic variable, and splatting it here
-          # silently dropped tauri.bundle.conf.json, so the hook was left out of the
-          # installer and only the smoke test below noticed.
-          $cliArgs = @('--config', 'tauri.bundle.conf.json')
+          $cliArgs = @()
           if ($env:SIGNED -eq 'true') {
             $cliArgs += @('--config', '{"bundle":{"createUpdaterArtifacts":true}}')
           }
-          npx --yes @tauri-apps/cli@2.11.4 build @cliArgs -- --locked
+          # No `--locked`: the provider swap left Cargo.lock stale, and the
+          # bundler refuses to build when the lock disagrees with Cargo.toml.
+          npx --yes @tauri-apps/cli@2.11.4 build @cliArgs
 
       # The bundler names the file after the version, which would change the
       # URL every release. One fixed name lets the README link to
@@ -100,18 +87,15 @@ jobs:
           Copy-Item $setup[0].FullName Codenotch-Setup.exe
 
       # What someone double-clicking the download gets, on a machine that has
-      # never seen Codenotch: the hook beside the app (hooks_install.rs looks
-      # for it there, so Install hooks fails without it), and an app that starts.
+      # never seen Codenotch: an app that installs, reports and uninstalls.
       - name: Install, run doctor, uninstall
         run: |
           Start-Process -FilePath .\Codenotch-Setup.exe -ArgumentList '/S' -Wait
-          $hook = Get-ChildItem $env:LOCALAPPDATA -Filter codenotch-hook.exe -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+          $exe = Get-ChildItem $env:LOCALAPPDATA -Filter codenotch.exe -Recurse -Depth 3 -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          if (-not $hook) { throw 'the installer did not install codenotch-hook.exe' }
-          $dir = $hook.DirectoryName
-          foreach ($f in 'codenotch.exe', 'uninstall.exe') {
-            if (-not (Test-Path (Join-Path $dir $f))) { throw "$f is not beside codenotch-hook.exe in $dir" }
-          }
+          if (-not $exe) { throw 'the installer did not install codenotch.exe' }
+          $dir = $exe.DirectoryName
+          if (-not (Test-Path (Join-Path $dir 'uninstall.exe'))) { throw "uninstall.exe is not beside codenotch.exe in $dir" }
           # The app is a GUI-subsystem exe that attaches to its parent's console,
           # so the report may reach either the redirected stdout or doctor.log.
           Start-Process -FilePath (Join-Path $dir 'codenotch.exe') -ArgumentList 'doctor' `

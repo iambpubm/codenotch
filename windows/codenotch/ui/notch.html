@@ -349,17 +349,18 @@ function usedCopy(w){
   return ui().usedLeft(used,left);
 }
 
+// WorkBuddy credits, read from the WorkBuddy desktop app's own session; absent without that app
 let usage={status:'',windows:[],fetched_at:0,note:''};
 let codexSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let cursorSnap={status:'absent',windows:[],fetched_at:0,note:''};
-// Grok Build credits, from the Grok CLI's own session; absent until that CLI is signed in
-let grokSnap={status:'absent',windows:[],fetched_at:0,note:''};
+// DeepSeek Harness token spend, summed from its own local sessions; absent until it has run here
+let dshSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let glmSnap={status:'absent',windows:[],fetched_at:0,note:''};
 // OpenCode Go plan, read with OpenCode's own sign-in; absent until OpenCode is installed
 let opencodeSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let agSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let glyphs={}; // id → {kind:'mark'|'appicon', url}
-let activity=[]; // working state of the non-Claude providers: {provider,state:'busy'|'waiting',name,detail,since}
+let activity=[]; // working state, where the probe can see it: {provider,state:'busy'|'waiting',name,detail,since}
 /* Which screen edge the notch is pinned to. Rust owns it (it is what placed the window); the page is
    told so it can mirror or rotate itself to match. 'right' is the default and the pre-edge layout. */
 let notchEdge='right';
@@ -427,44 +428,39 @@ const TEXT={
     'Rate limited — retrying in':'요청 제한 — 재시도까지',
     'request today':'오늘 요청',
     'requests today':'오늘 요청',
+    'Credits':'크레딧',
+    'Today':'오늘',
+    'Last 7 days':'최근 7일',
+    'Last 30 days':'최근 30일',
+    'token today':'토큰 (오늘)',
+    'tokens today':'토큰 (오늘)',
+    'no tokens today':'오늘 토큰 없음',
+    'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy가 자격 증명을 봉인했습니다 — 로컬 토큰 사용량 표시',
+    'No balance available — showing local token usage':'잔액을 사용할 수 없음 — 로컬 토큰 사용량 표시',
+    'Sign in to WorkBuddy to see usage.':'사용량을 확인하려면 WorkBuddy에 로그인하십시오.',
+    'DeepSeek Harness has not run here yet.':'DeepSeek Harness가 이 컴퓨터에서 아직 실행되지 않았습니다.',
     'no requests today':'오늘 요청 없음',
     'Waiting for first reading…':'첫 측정값을 기다리는 중…',
-    'Sign in to Claude Code to see usage.':'사용량을 확인하려면 Claude Code에 로그인하십시오.',
     'Sign in to Cursor to see usage.':'사용량을 확인하려면 Cursor에 로그인하십시오.',
     'Sign in to Codex to see usage.':'사용량을 확인하려면 Codex에 로그인하십시오.',
     'Sign in to Antigravity to see usage.':'사용량을 확인하려면 Antigravity에 로그인하십시오.',
     'needs your input':'응답을 기다리는 중',
     'Working in':'작업 위치:',
-    'Sign in':'로그인',
-    'Signing in...':'로그인 중…',
     'Refresh':'새로 고침',
-    'Browser sign-in through Claude Code':'Claude Code를 통한 브라우저 로그인',
     'Complete sign-in in the browser or terminal window.':'브라우저나 터미널 창에서 로그인을 완료하십시오.',
     'Sign-in complete. Refreshing usage...':'로그인되었습니다. 사용량을 새로 고치는 중…',
     'Sign-in cancelled, failed or timed out. Try again.':'로그인이 취소되거나 실패했거나 시간이 초과되었습니다. 다시 시도하십시오.',
     'Checking usage...':'사용량 확인 중…',
     'Rate limited. Wait for the retry deadline.':'요청이 제한되었습니다. 재시도 시점까지 기다리십시오.',
-    'Claude Code CLI not found. Install the standalone CLI first.':'Claude Code CLI를 찾을 수 없습니다. 먼저 독립 실행형 CLI를 설치하십시오.',
-    'Claude sign-in or renewal is already running.':'Claude 로그인 또는 갱신이 이미 진행 중입니다.',
-    'Unable to open Claude sign-in window.':'Claude 로그인 창을 열 수 없습니다.',
-    'Claude HTTP 403: access denied. Check network or account access; sign-in may still be valid.':'Claude HTTP 403: 접근이 거부되었습니다. 네트워크나 계정의 접근 권한을 확인하십시오. 로그인은 여전히 유효할 수 있습니다.',
-    'Run grok login to see usage.':'사용량을 확인하려면 grok login을 실행하십시오.',
   },
   'pt-BR':{
     'Included usage':'Uso incluído',
-    'Sign in':'Entrar',
-    'Signing in...':'Entrando...',
     'Refresh':'Atualizar',
-    'Browser sign-in through Claude Code':'Login pelo navegador via Claude Code',
     'Complete sign-in in the browser or terminal window.':'Conclua o login no navegador ou na janela do terminal.',
     'Sign-in complete. Refreshing usage...':'Login concluído. Atualizando uso...',
     'Sign-in cancelled, failed or timed out. Try again.':'O login foi cancelado, falhou ou expirou. Tente novamente.',
     'Checking usage...':'Verificando uso...',
     'Rate limited. Wait for the retry deadline.':'Limite de requisições atingido. Aguarde o prazo para nova tentativa.',
-    'Claude Code CLI not found. Install the standalone CLI first.':'CLI do Claude Code não encontrada. Instale primeiro a CLI independente.',
-    'Claude sign-in or renewal is already running.':'O login ou a renovação do Claude já está em andamento.',
-    'Unable to open Claude sign-in window.':'Não foi possível abrir a janela de login do Claude.',
-    'Claude HTTP 403: access denied. Check network or account access; sign-in may still be valid.':'Claude HTTP 403: acesso negado. Verifique a rede ou o acesso da conta; o login ainda pode ser válido.',
     'API usage':'Uso da API',
     'On demand':'Sob demanda',
     'Usage':'Uso',
@@ -493,13 +489,22 @@ const TEXT={
     'Rate limited — retrying in':'Limite de requisições — nova tentativa em',
     'request today':'requisição hoje',
     'requests today':'requisições hoje',
+    'Credits':'Créditos',
+    'Today':'Hoje',
+    'Last 7 days':'Últimos 7 dias',
+    'Last 30 days':'Últimos 30 dias',
+    'token today':'token hoje',
+    'tokens today':'tokens hoje',
+    'no tokens today':'nenhum token hoje',
+    'Balance sealed by WorkBuddy — showing local token usage':'Credencial selada pelo WorkBuddy — mostrando uso local de tokens',
+    'No balance available — showing local token usage':'Saldo indisponível — mostrando uso local de tokens',
+    'Sign in to WorkBuddy to see usage.':'Entre no WorkBuddy para ver o uso.',
+    'DeepSeek Harness has not run here yet.':'O DeepSeek Harness ainda não foi executado aqui.',
     'no requests today':'nenhuma solicitação hoje',
     'Waiting for first reading…':'Aguardando a primeira leitura…',
-    'Sign in to Claude Code to see usage.':'Entre no Claude Code para ver o uso.',
     'Sign in to Cursor to see usage.':'Entre no Cursor para ver o uso.',
     'Sign in to Codex to see usage.':'Entre no Codex para ver o uso.',
     'Sign in to Antigravity to see usage.':'Entre no Antigravity para ver o uso.',
-    'Run grok login to see usage.':'Execute grok login para ver o uso.',
     'Run opencode auth login to see usage.':'Execute opencode auth login para ver o uso.',
     'No OpenCode Go subscription on this account':'Nenhuma assinatura do OpenCode Go nesta conta',
     'needs your input':'precisa da sua resposta',
@@ -534,9 +539,19 @@ const TEXT={
     'Rate limited — retrying in':'Ліміт запитів — повтор через',
     'request today':'запит сьогодні',
     'requests today':'запитів сьогодні',
+    'Credits':'Кредити',
+    'Today':'Сьогодні',
+    'Last 7 days':'Останні 7 днів',
+    'Last 30 days':'Останні 30 днів',
+    'token today':'токен сьогодні',
+    'tokens today':'токенів сьогодні',
+    'no tokens today':'сьогодні токенів немає',
+    'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy запечатав облікові дані — показано локальне використання токенів',
+    'No balance available — showing local token usage':'Баланс недоступний — показано локальне використання токенів',
+    'Sign in to WorkBuddy to see usage.':'Увійдіть у WorkBuddy, щоб бачити використання.',
+    'DeepSeek Harness has not run here yet.':'DeepSeek Harness ще не запускався на цьому комп’ютері.',
     'no requests today':'сьогодні запитів немає',
     'Waiting for first reading…':'Очікування першого показника…',
-    'Sign in to Claude Code to see usage.':'Увійдіть у Claude Code, щоб бачити використання.',
     'Sign in to Cursor to see usage.':'Увійдіть у Cursor, щоб бачити використання.',
     'Sign in to Codex to see usage.':'Увійдіть у Codex, щоб бачити використання.',
     'Sign in to Antigravity to see usage.':'Увійдіть в Antigravity, щоб бачити використання.',
@@ -545,16 +560,9 @@ const TEXT={
   },
   ru:{
     'Included usage':'Включённое использование',
-    'Sign in':'Авторизоваться',
-    'Signing in...':'Вход…',
-    'Browser sign-in through Claude Code':'Вход через браузер с помощью Claude Code',
     'Complete sign-in in the browser or terminal window.':'Подтвердите вход в браузере или окне терминала.',
     'Sign-in complete. Refreshing usage...':'Вход выполнен. Обновляю лимиты…',
     'Sign-in cancelled, failed or timed out. Try again.':'Вход отменён, завершился ошибкой или истекло время ожидания. Попробуйте ещё раз.',
-    'Claude Code CLI not found. Install the standalone CLI first.':'Claude Code CLI не найден. Установите отдельный CLI.',
-    'Claude sign-in or renewal is already running.':'Вход или обновление авторизации Claude уже выполняется.',
-    'Unable to open Claude sign-in window.':'Не удалось открыть окно входа Claude.',
-    'Claude HTTP 403: access denied. Check network or account access; sign-in may still be valid.':'Claude HTTP 403: доступ запрещён. Проверьте сеть и доступ к аккаунту; авторизация может быть действующей.',
     'API usage':'Использование API',
     'On demand':'По запросу',
     'Usage':'Использование',
@@ -582,13 +590,22 @@ const TEXT={
     'Rate limited — retrying in':'Превышен лимит — повтор через',
     'request today':'запрос сегодня',
     'requests today':'запросов сегодня',
+    'Credits':'Кредиты',
+    'Today':'Сегодня',
+    'Last 7 days':'Последние 7 дней',
+    'Last 30 days':'Последние 30 дней',
+    'token today':'токен сегодня',
+    'tokens today':'токенов сегодня',
+    'no tokens today':'сегодня токенов нет',
+    'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy запечатал учётные данные — показано локальное использование токенов',
+    'No balance available — showing local token usage':'Баланс недоступен — показано локальное использование токенов',
+    'Sign in to WorkBuddy to see usage.':'Войдите в WorkBuddy, чтобы увидеть использование.',
+    'DeepSeek Harness has not run here yet.':'DeepSeek Harness ещё не запускался на этом компьютере.',
     'no requests today':'сегодня запросов нет',
     'Waiting for first reading…':'Ожидание первого показания…',
-    'Sign in to Claude Code to see usage.':'Войдите в Claude Code, чтобы увидеть использование.',
     'Sign in to Cursor to see usage.':'Войдите в Cursor, чтобы увидеть использование.',
     'Sign in to Codex to see usage.':'Войдите в Codex, чтобы увидеть использование.',
     'Sign in to Antigravity to see usage.':'Войдите в Antigravity, чтобы увидеть использование.',
-    'Run grok login to see usage.':'Выполните grok login, чтобы увидеть использование.',
     'needs your input':'требуется ваш ответ',
     'Working in':'Работает в'
   },
@@ -621,13 +638,22 @@ const TEXT={
     'Rate limited — retrying in':'已限流 — 稍后重试',
     'request today':'次请求（今日）',
     'requests today':'次请求（今日）',
+    'Credits':'额度',
+    'Today':'今天',
+    'Last 7 days':'近 7 天',
+    'Last 30 days':'近 30 天',
+    'token today':'Token（今日）',
+    'tokens today':'Tokens（今日）',
+    'no tokens today':'今日无 token 消耗',
+    'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy 已密封凭据 — 显示本地 token 用量',
+    'No balance available — showing local token usage':'无可用额度 — 显示本地 token 用量',
+    'Sign in to WorkBuddy to see usage.':'请登录 WorkBuddy 以查看用量。',
+    'DeepSeek Harness has not run here yet.':'本机还没有运行过 DeepSeek Harness。',
     'no requests today':'今日没有请求',
     'Waiting for first reading…':'正在等待第一次读数…',
-    'Sign in to Claude Code to see usage.':'请登录 Claude Code 以查看用量。',
     'Sign in to Cursor to see usage.':'请登录 Cursor 以查看用量。',
     'Sign in to Codex to see usage.':'请登录 Codex 以查看用量。',
     'Sign in to Antigravity to see usage.':'请登录 Antigravity 以查看用量。',
-    'Run grok login to see usage.':'请运行 grok login 以查看用量。',
     'needs your input':'等待你的输入',
     'Working in':'工作于',
   },
@@ -660,13 +686,22 @@ const TEXT={
     'Rate limited — retrying in':'已限流 — 稍後重試',
     'request today':'次要求（今日）',
     'requests today':'次要求（今日）',
+    'Credits':'額度',
+    'Today':'今天',
+    'Last 7 days':'近 7 天',
+    'Last 30 days':'近 30 天',
+    'token today':'Token（今日）',
+    'tokens today':'Tokens（今日）',
+    'no tokens today':'今日無 token 消耗',
+    'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy 已密封憑證 — 顯示本機 token 用量',
+    'No balance available — showing local token usage':'無可用額度 — 顯示本機 token 用量',
+    'Sign in to WorkBuddy to see usage.':'請登入 WorkBuddy 以查看用量。',
+    'DeepSeek Harness has not run here yet.':'本機還沒有執行過 DeepSeek Harness。',
     'no requests today':'今日沒有要求',
     'Waiting for first reading…':'正在等待第一次讀數…',
-    'Sign in to Claude Code to see usage.':'請登入 Claude Code 以查看用量。',
     'Sign in to Cursor to see usage.':'請登入 Cursor 以查看用量。',
     'Sign in to Codex to see usage.':'請登入 Codex 以查看用量。',
     'Sign in to Antigravity to see usage.':'請登入 Antigravity 以查看用量。',
-    'Run grok login to see usage.':'請執行 grok login 以查看用量。',
     'needs your input':'等待你的輸入',
     'Working in':'工作於',
   },
@@ -697,8 +732,6 @@ const PATTERNS={
     [/via Antigravity CLI/g,'Antigravity CLI 경유'],
     [/via Antigravity/g,'Antigravity 경유'],
     [/via Google/g,'Google 경유'],
-    [/No Claude Code credential found/g,'Claude Code 자격 증명을 찾을 수 없습니다'],
-    [/Credential expired — run claude once in a terminal to renew it/g,'자격 증명이 만료되었습니다 — 터미널에서 claude를 한 번 실행해 갱신하십시오'],
     [/Credential rejected \(switched accounts\?\)/g,'자격 증명이 거부되었습니다 (계정을 전환하셨습니까?)'],
     [/Codex sign-in expired — open Codex once to refresh it/g,'Codex 로그인이 만료되었습니다 — Codex를 한 번 열어 갱신하십시오'],
     [/Codex rejected its sign-in — sign in to Codex again/g,'Codex 로그인이 거부되었습니다 — Codex에 다시 로그인하십시오'],
@@ -735,8 +768,6 @@ const PATTERNS={
     [/via Antigravity CLI/g,'via Antigravity CLI'],
     [/via Antigravity/g,'via Antigravity'],
     [/via Google/g,'via Google'],
-    [/No Claude Code credential found/g,'Credencial do Claude Code não encontrada'],
-    [/Credential expired — run claude once in a terminal to renew it/g,'A credencial expirou — execute claude uma vez no terminal para renová-la'],
     [/Credential rejected \(switched accounts\?\)/g,'Credencial rejeitada (você trocou de conta?)'],
     [/Codex sign-in expired — open Codex once to refresh it/g,'O login do Codex expirou — abra o Codex uma vez para atualizá-lo'],
     [/Codex rejected its sign-in — sign in to Codex again/g,'O Codex rejeitou o login — entre novamente no Codex'],
@@ -773,8 +804,6 @@ const PATTERNS={
     [/via Antigravity CLI/g,'через Antigravity CLI'],
     [/via Antigravity/g,'через Antigravity'],
     [/via Google/g,'через Google'],
-    [/No Claude Code credential found/g,'Не знайдено облікових даних Claude Code'],
-    [/Credential expired — run claude once in a terminal to renew it/g,'Термін дії облікових даних минув — запустіть claude один раз у терміналі, щоб поновити їх'],
     [/Credential rejected \(switched accounts\?\)/g,'Облікові дані відхилено (змінили акаунт?)'],
     [/Codex sign-in expired — open Codex once to refresh it/g,'Термін входу в Codex минув — відкрийте Codex один раз, щоб поновити'],
     [/Codex rejected its sign-in — sign in to Codex again/g,'Codex відхилив вхід — увійдіть у Codex ще раз'],
@@ -811,8 +840,6 @@ const PATTERNS={
     [/via Antigravity CLI/g,'через CLI Antigravity'],
     [/via Antigravity/g,'через Antigravity'],
     [/via Google/g,'через Google'],
-    [/No Claude Code credential found/g,'Учётные данные Claude Code не найдены'],
-    [/Credential expired — run claude once in a terminal to renew it/g,'Учётные данные истекли — запустите claude в терминале один раз, чтобы обновить их'],
     [/Credential rejected \(switched accounts\?\)/g,'Учётные данные отклонены (вы сменили аккаунт?)'],
     [/Codex sign-in expired — open Codex once to refresh it/g,'Срок входа в Codex истёк — откройте Codex для обновления'],
     [/Codex rejected its sign-in — sign in to Codex again/g,'Codex отклонил вход — войдите в Codex снова'],
@@ -827,6 +854,19 @@ const PATTERNS={
     [/Cursor session was rejected — sign in again in the editor/g,'Сеанс Cursor отклонён — снова войдите в редакторе'],
   ],
   zh:[
+    // WorkBuddy and DeepSeek Harness notes, which the Rust side writes as whole English sentences.
+    // A language without its own rule keeps the English line rather than half a translation.
+    [/^WorkBuddy is not signed in — open the app and sign in once$/,'WorkBuddy 未登录 — 打开应用登录一次即可'],
+    [/^WorkBuddy is here and signed out$/,'WorkBuddy 已安装但未登录'],
+    [/^The WorkBuddy session file is not readable JSON$/,'WorkBuddy 的会话文件不是可读的 JSON'],
+    [/^The WorkBuddy session holds no usable token or account id$/,'WorkBuddy 会话里没有可用的 token 或账号 ID'],
+    [/^WorkBuddy sealed this credential with its own key \(5\.6\.0\+\), so Codenotch cannot read it\. Signing in again will not change that\.$/,'WorkBuddy 5.6.0 起用自己的密钥封装了凭据，Codenotch 无法读取；重新登录也改变不了这一点。'],
+    [/^The WorkBuddy session has expired — sign in again in the app$/,'WorkBuddy 会话已过期 — 请在应用里重新登录'],
+    [/^WorkBuddy rejected the session — sign in again in the app$/,'WorkBuddy 拒绝了该会话 — 请在应用里重新登录'],
+    [/^No active WorkBuddy Credit package on this account yet$/,'该账号暂时没有生效中的 WorkBuddy 额度包'],
+    [/^No WorkBuddy Credit allowance is published for this plan$/,'该套餐未公布 WorkBuddy 额度'],
+    [/^Unmetered WorkBuddy enterprise plan \(unlimited Credits\)$/,'WorkBuddy 企业版套餐不限量，无需计量'],
+    [/^No DeepSeek Harness session has run yet$/,'本机还没有运行过 DeepSeek Harness 会话'],
     [/^(\d+)m limit$/,'$1 分钟限额'],
     [/^(\d+)h limit$/,'$1 小时限额'],
     [/^(\d+)d limit$/,'$1 天限额'],
@@ -849,8 +889,6 @@ const PATTERNS={
     [/via Antigravity CLI/g,'来自 Antigravity CLI'],
     [/via Antigravity/g,'来自 Antigravity'],
     [/via Google/g,'来自 Google'],
-    [/No Claude Code credential found/g,'未找到 Claude Code 凭证'],
-    [/Credential expired — run claude once in a terminal to renew it/g,'凭证已过期 — 在终端里运行一次 claude 即可续期'],
     [/Credential rejected \(switched accounts\?\)/g,'凭证被拒绝（换过账号？）'],
     [/Codex sign-in expired — open Codex once to refresh it/g,'Codex 登录已过期 — 打开一次 Codex 即可刷新'],
     [/Codex rejected its sign-in — sign in to Codex again/g,'Codex 拒绝了它的登录 — 请重新登录 Codex'],
@@ -865,6 +903,18 @@ const PATTERNS={
     [/Cursor session was rejected — sign in again in the editor/g,'Cursor 会话被拒绝 — 请在编辑器中重新登录'],
   ],
   'zh-Hant':[
+    // WorkBuddy and DeepSeek Harness notes, as the Traditional Chinese side of the same list above.
+    [/^WorkBuddy is not signed in — open the app and sign in once$/,'WorkBuddy 未登入 — 開啟應用登入一次即可'],
+    [/^WorkBuddy is here and signed out$/,'WorkBuddy 已安裝但未登入'],
+    [/^The WorkBuddy session file is not readable JSON$/,'WorkBuddy 的工作階段檔案不是可讀的 JSON'],
+    [/^The WorkBuddy session holds no usable token or account id$/,'WorkBuddy 工作階段裡沒有可用的 token 或帳號 ID'],
+    [/^WorkBuddy sealed this credential with its own key \(5\.6\.0\+\), so Codenotch cannot read it\. Signing in again will not change that\.$/,'WorkBuddy 5.6.0 起用自己的金鑰封裝了憑證，Codenotch 無法讀取；重新登入也改變不了這一點。'],
+    [/^The WorkBuddy session has expired — sign in again in the app$/,'WorkBuddy 工作階段已過期 — 請在應用裡重新登入'],
+    [/^WorkBuddy rejected the session — sign in again in the app$/,'WorkBuddy 拒絕了該工作階段 — 請在應用裡重新登入'],
+    [/^No active WorkBuddy Credit package on this account yet$/,'該帳號暫時沒有生效中的 WorkBuddy 額度包'],
+    [/^No WorkBuddy Credit allowance is published for this plan$/,'該方案未公布 WorkBuddy 額度'],
+    [/^Unmetered WorkBuddy enterprise plan \(unlimited Credits\)$/,'WorkBuddy 企業版方案不限量，無需計量'],
+    [/^No DeepSeek Harness session has run yet$/,'本機還沒有執行過 DeepSeek Harness 工作階段'],
     [/^(\d+)m limit$/,'$1 分鐘限額'],
     [/^(\d+)h limit$/,'$1 小時限額'],
     [/^(\d+)d limit$/,'$1 天限額'],
@@ -887,8 +937,6 @@ const PATTERNS={
     [/via Antigravity CLI/g,'來自 Antigravity CLI'],
     [/via Antigravity/g,'來自 Antigravity'],
     [/via Google/g,'來自 Google'],
-    [/No Claude Code credential found/g,'未找到 Claude Code 憑證'],
-    [/Credential expired — run claude once in a terminal to renew it/g,'憑證已過期 — 在終端機裡執行一次 claude 即可續期'],
     [/Credential rejected \(switched accounts\?\)/g,'憑證被拒絕（換過帳號？）'],
     [/Codex sign-in expired — open Codex once to refresh it/g,'Codex 登入已過期 — 開啟一次 Codex 即可重新整理'],
     [/Codex rejected its sign-in — sign in to Codex again/g,'Codex 拒絕了它的登入 — 請重新登入 Codex'],
@@ -952,15 +1000,10 @@ function setUiLanguage(lang){
   renderRing();
   if(card&&card.classList.contains('show')) renderCard();
 }
-// "Is it working?" per provider: Claude from the four-state engine, the others from the activity probe. Returns running | attention | idle
+// "Is it working?" per provider, from the activity probe. Returns running | attention | idle.
+// A provider the probe cannot see (WorkBuddy, DeepSeek Harness, z.ai, OpenCode) simply stays idle,
+// and its cell draws no activity arc.
 function workState(id){
-  if(id==='claude'){
-    if(stateSnap.agg==='running') return 'running';
-    if(stateSnap.agg==='attention') return 'attention';
-    // The engine cannot see cloud sessions: fall back to the desktop app's network activity
-    if(activity.some(a=>a.provider==='claude'&&a.state==='busy')) return 'running';
-    return 'idle';
-  }
   const acts=activity.filter(a=>a.provider===id);
   if(acts.some(a=>a.state==='waiting')) return 'attention';
   if(acts.some(a=>a.state==='busy')) return 'running';
@@ -980,35 +1023,19 @@ function slotFor(id){
   for(const s of notchSlots){ if(s&&s.provider===id) return s; }
   return null;
 }
-// One cell per Claude account. Each account's windows arrive carrying its heading in `group` and,
-// past the default account, an `@slug` id; the cell gets that account's windows under the ids they
-// would have had on their own, so headlineOf and weeklyOf need no rule about accounts. `base` is the
-// provider the cell belongs to (glyph, activity, slot choice); `id` is what makes the cell unique.
-function claudeCells(){
-  const ws=Array.isArray(usage.windows)?usage.windows:[];
-  const accounts=[];
-  for(const w of ws){
-    const g=w.group||'';
-    if(!accounts.some(a=>a.g===g)) accounts.push({g:g,slug:(String(w.id).split('@')[1]||'')});
-  }
-  // One account (or a reading with no headings yet) is the single cell it has always been
-  if(accounts.length<2) return [{id:'claude',base:'claude',name:'Claude',glyph:'C',snap:usage}];
-  return accounts.map(a=>({
-    id:a.slug?'claude@'+a.slug:'claude',
-    base:'claude',
-    name:a.g||'Claude',
-    glyph:'C',
-    snap:Object.assign({},usage,{windows:ws.filter(w=>(w.group||'')===a.g)
-      .map(w=>Object.assign({},w,{id:String(w.id).split('@')[0]}))})
-  }));
+// WorkBuddy is one cell: its meter aggregates every active Credit package on the account, so there
+// are no per-account headings to split on the way Claude Code's windows had.
+function workbuddyCells(){
+  if(usage.status==='absent') return [];
+  return [{id:'workbuddy',base:'workbuddy',name:'WorkBuddy',glyph:'W',snap:usage}];
 }
 function providers(){
-  const list=claudeCells();
+  const list=workbuddyCells();
   if(codexSnap.status!=='absent') list.push({id:'codex',base:'codex',name:'Codex',glyph:'Cx',snap:codexSnap});
   if(glmSnap.status!=='absent') list.push({id:'glm',base:'glm',name:'z.ai',glyph:'Z.ai',snap:glmSnap});
   if(opencodeSnap.status!=='absent') list.push({id:'opencode',base:'opencode',name:'OpenCode',glyph:'OC',snap:opencodeSnap});
   if(cursorSnap.status!=='absent') list.push({id:'cursor',base:'cursor',name:'Cursor',glyph:'Cu',snap:cursorSnap});
-  if(grokSnap.status!=='absent') list.push({id:'grok',base:'grok',name:'Grok',glyph:'Gk',snap:grokSnap});
+  if(dshSnap.status!=='absent') list.push({id:'dsh',base:'dsh',name:'DeepSeek Harness',glyph:'DS',snap:dshSnap});
   if(agSnap.status!=='absent') list.push({id:'gemini',base:'gemini',name:'Antigravity',glyph:'Ag',snap:agSnap});
   if(Array.isArray(notchSlots)&&notchSlots.length){
     const picked=list.filter(p=>!!slotFor(p.base));
@@ -1036,10 +1063,10 @@ function laneIs(w,limit){
 function headlineOf(snap,id){
   const ws=snap.windows; if(!ws.length) return null;
   const byId=x=>ws.find(w=>w.id===x)||null;
-  if(id==='claude') return byId('session');
+  if(id==='workbuddy') return byId('credits')||byId('today'); // tokens lead once the balance is sealed
   if(id==='codex') return byId('primary');
   if(id==='cursor') return byId('included')||byId('api');
-  if(id==='grok') return byId('credits')||ws[0];
+  if(id==='dsh') return byId('today')||ws[0]; // counts, not fractions — the ring draws the track only
   if(id==='glm') return byId('session');
   if(id==='opencode') return byId('rolling');
   const fam=ws.filter(w=>laneFamily(w)===agPrefs.model), lanes=fam.length?fam:ws;
@@ -1047,16 +1074,18 @@ function headlineOf(snap,id){
   return tightestOf(lanes.filter(w=>w.used<1))||tightestOf(lanes)||lanes[0];
 }
 // END TESTABLE HEADLINE SELECTOR
-// The weekly window each provider reports, or null where there is none: Claude names it seven_day,
-// Codex calls its second window secondary, and Antigravity has one per model family. Cursor has none.
+// The weekly window each provider reports, or null where there is none: Codex calls its second
+// window secondary, GLM and OpenCode name one weekly, and Antigravity has one per model family.
+// Cursor has none, WorkBuddy reports a balance and running token counts, and DeepSeek Harness's
+// tokens are counted over their own spans rather than against a weekly allowance.
 // BEGIN TESTABLE WEEKLY SELECTOR
 function weeklyOf(snap,id){
   const ws=snap.windows.filter(w=>w.count==null); if(!ws.length) return null;
   const byId=x=>ws.find(w=>w.id===x)||null;
-  if(id==='claude') return byId('seven_day')||byId('weekly_all')||byId('weekly');
+  if(id==='workbuddy') return null; // a balance and running token counts, never a weekly window
   if(id==='codex') return byId('secondary');
   if(id==='cursor') return null;
-  if(id==='grok') return null; // the credits window is already the weekly one
+  if(id==='dsh') return null; // count windows carry no denominator
   if(id==='glm') return byId('weekly');
   if(id==='opencode') return byId('weekly');
   const fam=ws.filter(w=>laneFamily(w)===agPrefs.model), lanes=fam.length?fam:ws;
@@ -1067,7 +1096,8 @@ function weeklyOf(snap,id){
 // provider that is answering perfectly well, which made "stale" mean "recently fetched" rather than
 // "old enough not to trust". A provider that knows its own reading is stale still says so in status.
 function staleOf(snap){ if(snap.status==='stale') return true; return snap.fetched_at>0 && (Date.now()-snap.fetched_at)>15*60*1000; }
-let stateSnap={sessions:[],agg:'idle'};
+// The page's own state from Rust: the resolved language and the clock format (see PageState in main.rs)
+let stateSnap={lang:'',lang_resolved:'',clock_24h:false};
 
 function svgArc(r,frac,color,width,extra=''){
   // Nothing at all at zero: a zero-length dash still paints a dot once the caps are round, where the
@@ -1150,46 +1180,24 @@ function ago(ms){
   return ui().ago(m);
 }
 
-const STATE_DOT={running:INK,attention:WATCH,done:AMPLE,idle:TRACK};
 // The card is clipped, not scrolled, so rows past this would push its title off the top; the rest are counted, as on the Mac
 const SESSION_ROWS=5;
 function moreRow(n){ return n>0?`<div class="s-more">${ui().andMore(n)}</div>`:''; }
 
-let hoverId='claude';
-let claudeAuth={busy:false,message:''};
-let claudeActionMessage='';
-// CLAUDE_AUTH_ACTIONS_START
-// Only while signed out, where the Mac shows its sign-in line; and only on the default account,
-// since the CLI's login runs without CLAUDE_CONFIG_DIR and would sign in ~/.claude whichever card asked
-function offersClaudeSignIn(p){ return p.id==='claude'&&p.snap.status==='needsAuth'; }
-function claudeAuthHtml(auth, message=''){
-  return `<div class="c-auth"><button id="claude-sign-in" ${auth.busy?'disabled':''}>${esc(textCopy(auth.busy?'Signing in...':'Sign in'))}</button></div><div class="c-auth-status" role="status">${esc(textCopy(message||auth.message||'Browser sign-in through Claude Code'))}</div>`;
-}
-async function signInClaude(){
-  if(claudeAuth.busy) return;
-  claudeActionMessage='';
-  try{
-    claudeAuth={busy:true,message:'Complete sign-in in the browser or terminal window.'};
-    renderCard();
-    await invoke('claude_sign_in');
-  }catch(e){
-    claudeAuth.busy=false;
-    claudeActionMessage=String(e?.message||e);
-  }
-  renderCard();
-}
-// CLAUDE_AUTH_ACTIONS_END
+let hoverId='workbuddy';
 function renderCard(){
   const c=document.getElementById('card');
-  const p=providers().find(x=>x.id===hoverId)||providers()[0];
+  const list=providers();
+  // With no provider installed at all there is nothing to say: leave the card closed rather than
+  // open it on a blank. (WorkBuddy may be absent like any other provider, so this is reachable.)
+  const p=list.find(x=>x.id===hoverId)||list[0];
+  if(!p){ card.classList.remove('show'); return; }
   const snap=p.snap;
   const headIcon=glyphHtml(p,true);
-  // p.name is no longer a constant: for a second account it is built from the home
-  // directory's slug and the subscriptionType read out of .credentials.json.
   let html=`<div class="c-head">${headIcon}<span class="c-title">${esc(ui().title(p.name))}</span></div>`;
   if(staleOf(snap)&&snap.fetched_at) html+=`<div class="c-sub">${ui().updated(ago(snap.fetched_at))}</div>`;
   if(snap.status==='needsAuth'){
-    const who={claude:'Sign in to Claude Code to see usage.',cursor:'Sign in to Cursor to see usage.',codex:'Sign in to Codex to see usage.',grok:'Run grok login to see usage.',opencode:'Run opencode auth login to see usage.',gemini:'Sign in to Antigravity to see usage.'}[p.base]||'';
+    const who={workbuddy:'Sign in to WorkBuddy to see usage.',cursor:'Sign in to Cursor to see usage.',codex:'Sign in to Codex to see usage.',dsh:'DeepSeek Harness has not run here yet.',opencode:'Run opencode auth login to see usage.',gemini:'Sign in to Antigravity to see usage.'}[p.base]||'';
     html+=`<div class="c-note">${textCopy(who)}<br>${esc(textCopy(snap.note||''))}</div>`;
   }else if(!snap.windows.length){
     html+=`<div class="c-note">${esc(textCopy(snap.note||'Waiting for first reading…'))}</div>`;
@@ -1203,8 +1211,11 @@ function renderCard(){
         if(group) html+=`<div class="g-head">${esc(textCopy(group))}</div><div class="g-box">`;
       }
       if(w.count!=null){
+        // A count window has no denominator. `unit` says what is being counted — Antigravity counts
+        // requests, DeepSeek Harness counts tokens — and only the wording changes.
+        const unit=w.unit==='tokens'?'token':'request';
         html+=`<div class="win"><div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span></div>
-          <div class="w-used">${w.count>0?`~${w.count} ${textCopy(w.count===1?'request today':'requests today')}`:textCopy('no requests today')}</div></div>`;
+          <div class="w-used">${w.count>0?`~${w.count} ${textCopy(w.count===1?unit+' today':unit+'s today')}`:textCopy('no '+unit+'s today')}</div></div>`;
         continue;
       }
       html+=`<div class="win">
@@ -1216,31 +1227,18 @@ function renderCard(){
     if(group) html+=`</div>`;
     if(snap.note) html+=`<div class="c-note">${esc(textCopy(snap.note))}</div>`;
   }
-  if(offersClaudeSignIn(p)) html+=claudeAuthHtml(claudeAuth,claudeActionMessage);
-  if(p.base==='claude'){ // live sessions (a full list with jump-to-session is a follow-up)
-    const act=stateSnap.sessions.filter(s=>s.state!=='idle');
-    if(act.length){
-      html+=`<div class="c-sessions">`;
-      for(const s of act.slice(0,SESSION_ROWS)){
-        html+=`<div class="s-row"><span class="s-dot" style="background:${STATE_DOT[s.state]||'#666'}"></span>${esc(s.title)}</div>`;
-      }
-      html+=moreRow(act.length-SESSION_ROWS)+`</div>`;
+  // Detected activity rows (Cursor reports state; Codex and Antigravity are inferred from recent
+  // writes). Waiting before busy, newest first within each, so what gets cut is what matters least.
+  const acts=activity.filter(a=>a.provider===p.base).sort((a,b)=>(b.state==='waiting')-(a.state==='waiting')||b.since-a.since);
+  if(acts.length){
+    html+=`<div class="c-sessions">`;
+    for(const a of acts.slice(0,SESSION_ROWS)){
+      const col=a.state==='waiting'?WATCH:INK;
+      html+=`<div class="s-row"><span class="s-dot" style="background:${col}"></span>${esc(a.name)}<span style="color:#808080;margin-left:auto">${esc(textCopy(a.detail))}</span></div>`;
     }
-  }else{ // other providers: detected activity rows (Cursor reports state; Codex/Antigravity are inferred from recent writes)
-    // Waiting before busy, newest first within each, so what gets cut is what matters least
-    const acts=activity.filter(a=>a.provider===p.base).sort((a,b)=>(b.state==='waiting')-(a.state==='waiting')||b.since-a.since);
-    if(acts.length){
-      html+=`<div class="c-sessions">`;
-      for(const a of acts.slice(0,SESSION_ROWS)){
-        const col=a.state==='waiting'?WATCH:INK;
-        html+=`<div class="s-row"><span class="s-dot" style="background:${col}"></span>${esc(a.name)}<span style="color:#808080;margin-left:auto">${esc(textCopy(a.detail))}</span></div>`;
-      }
-      html+=moreRow(acts.length-SESSION_ROWS)+`</div>`;
-    }
+    html+=moreRow(acts.length-SESSION_ROWS)+`</div>`;
   }
   c.innerHTML=html;
-  const signIn=c.querySelector('#claude-sign-in');
-  if(signIn) signIn.onclick=e=>{e.stopPropagation();signInClaude();};
   placeCard();
 }
 // The card follows the hovered cell: centred on it along the pill (kept inside the window), tail pointing at it.
@@ -1406,14 +1404,14 @@ document.addEventListener('mouseout',e=>{ // relatedTarget null = the cursor lef
 });
 listen('pointer_left',()=>{clearTimeout(hideTimer);hideCard();}).catch(()=>{});
 // Card content changes change its height -> report the hot rectangles again
-listen('usage',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
+listen('workbuddy',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
 listen('state',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
 /* The pill can be dragged up and down the right edge. Press and move more than 4 px = drag (handed to Rust,
    which follows the system cursor; the card is collapsed first); release without moving = click (refetches that ring). */
 let press=null, dragging=false;
 /* As on the Mac, a clicked ring presses in until its reading lands, and the reading turns once.
    Each provider's reading listener below calls settle() for its ring; PRESS_MAX is only the fallback.
-   Rust answers false when no reading is coming (Claude inside its rate-limit wait). */
+   Rust answers false when no reading is coming. */
 const PRESS_MIN=380, PRESS_MAX=6000;
 const refreshing={};
 function refreshRing(id){
@@ -1421,8 +1419,8 @@ function refreshRing(id){
   refreshing[id]={at:Date.now(),timer:setTimeout(()=>settle(id),PRESS_MAX)};
   renderRing();
   turnReading(id);
-  // The cell id addresses the DOM, the provider id addresses Rust: a second Claude
-  // account's cell is `claude@work`, which no command answers to.
+  // The cell id addresses the DOM, the provider id addresses Rust. They are the same string today,
+  // but the mapping is kept so a cell that ever needs a distinct DOM id still reaches Rust.
   const provider=(providers().find(p=>p.id===id)||{}).base||id;
   invoke('refresh_ring',{provider}).then(coming=>{if(!coming)settle(id);}).catch(()=>settle(id));
 }
@@ -1580,16 +1578,16 @@ invoke('get_ui_flags').then(applyUiFlags).catch(()=>{});
 listen('move_handle',e=>{ showMove=e.payload!==false; reportHot(); }).catch(()=>{});
 invoke('get_move_handle').then(v=>{ showMove=v!==false; reportHot(); }).catch(()=>{});
 
-listen('usage',e=>{usage=e.payload||usage;claudeActionMessage='';settle('claude');renderRing();if(card.classList.contains('show'))renderCard();})
-  .catch(e=>notice('listen(usage) failed: '+e));
+listen('workbuddy',e=>{usage=e.payload||usage;settle('workbuddy');renderRing();if(card.classList.contains('show'))renderCard();})
+  .catch(e=>notice('listen(workbuddy) failed: '+e));
 listen('state',e=>{stateSnap=e.payload||stateSnap;setUiLanguage(stateSnap.lang_resolved);renderRing();if(card.classList.contains('show'))renderCard();})
   .catch(e=>notice('listen(state) failed: '+e));
 listen('notice',e=>notice(e.payload)).catch(()=>{});
 listen('codex',e=>{codexSnap=e.payload||codexSnap;settle('codex');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 listen('cursor',e=>{cursorSnap=e.payload||cursorSnap;settle('cursor');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_cursor').then(u=>{cursorSnap=u||cursorSnap;renderRing();}).catch(()=>{});
-listen('grok',e=>{grokSnap=e.payload||grokSnap;settle('grok');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
-invoke('get_grok').then(u=>{grokSnap=u||grokSnap;renderRing();}).catch(()=>{});
+listen('dsh',e=>{dshSnap=e.payload||dshSnap;settle('dsh');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
+invoke('get_dsh').then(u=>{dshSnap=u||dshSnap;renderRing();}).catch(()=>{});
 
 listen('antigravity',e=>{agSnap=e.payload||agSnap;settle('gemini');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_antigravity').then(u=>{agSnap=u||agSnap;renderRing();}).catch(()=>{});
@@ -1620,19 +1618,9 @@ listen('notch_edge',e=>applyEdge(e.payload)).catch(()=>{});
 // measurement is made here either way — and still made if the ask fails, from the default edge.
 invoke('get_notch_edge').then(e=>{applyEdge(e);reportDpr();}).catch(()=>reportDpr());
 invoke('get_codex').then(u=>{codexSnap=u||codexSnap;renderRing();}).catch(()=>{});
-invoke('get_usage').then(u=>{usage=u||usage;renderRing();}).catch(e=>notice('get_usage failed: '+e));
+invoke('get_workbuddy').then(u=>{usage=u||usage;renderRing();}).catch(e=>notice('get_workbuddy failed: '+e));
 invoke('get_state').then(s=>{stateSnap=s||stateSnap;setUiLanguage(stateSnap.lang_resolved);renderRing();}).catch(()=>{});
 setInterval(renderRing,30_000); // stale state and reset copy move with time
-setInterval(async()=>{
-  if(!claudeAuth.busy&&!(hoverId==='claude'&&card.classList.contains('show'))) return;
-  try{
-    const next=await invoke('get_claude_auth');
-    if(JSON.stringify(next)!==JSON.stringify(claudeAuth)){
-      claudeAuth=next;
-      if(hoverId==='claude'&&card.classList.contains('show')){renderCard();armWatchdog();}
-    }
-  }catch(_){} // Local IPC only; no network requests and no automatic browser launch.
-},2000);
 </script>
 </body>
 </html>

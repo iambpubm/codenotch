@@ -45,6 +45,16 @@ test('Marker extraction does not depend on neighbouring function order', () => {
   assert.equal(isolated.headlineOf({ windows: [{ id: 'secondary' }] }, 'codex'), null);
 });
 test('Other provider headline selection is unchanged', () => {
-  assert.equal(pick([{ id: 'weekly_all' }, { id: 'session' }], 'claude'), 'session');
+  assert.equal(pick([{ id: 'weekly_all' }, { id: 'credits' }], 'workbuddy'), 'credits');
+  // The balance leads when it can be read; the local token windows take over when it cannot,
+  // because a sealed credential leaves the cell with only the transcripts to report.
+  assert.equal(pick([{ id: 'credits' }, { id: 'today' }], 'workbuddy'), 'credits');
+  assert.equal(pick([{ id: 'today' }, { id: 'week' }], 'workbuddy'), 'today');
+  assert.equal(pick([{ id: 'week' }, { id: 'month' }], 'workbuddy'), null);
   assert.equal(pick([{ id: 'on_demand' }, { id: 'included' }], 'cursor'), 'included');
+  assert.equal(pick([{ id: 'week' }, { id: 'today' }], 'dsh'), 'today');
+  // A declared window that is missing stays blank, never a stand-in — `pick` cannot reach the
+  // Antigravity lane code from here (laneFamily lives outside the marked block), so this uses
+  // WorkBuddy's own early return instead.
+  assert.equal(pick([{ id: 'credits' }, { id: 'weekly_all' }], 'workbuddy'), 'credits');
 });

@@ -2,26 +2,45 @@
 
 A Windows port of [Codenotch](https://github.com/vinzdg/codenotch) — the usage notch that
 sits on the edge of your screen and answers two questions at a glance:
-**how much of my AI allowance is left**, and **is Claude still working**.
+**how much of my AI allowance is left**, and **is anything still working**.
 
 Same design language as the macOS original (inverse-rounded pill, colour-graded rings,
 hover card with per-window bars), rebuilt for Windows in Rust + Tauri 2 / WebView2.
 No code is copied from the Swift app; the providers are reimplemented from their
 documented behaviour and the wire formats.
 
+## The two provider slots this build replaces
+
+Upstream's `claude` and `grok` cells are gone, along with everything that existed only to
+serve them: the Claude Code hooks, the local HTTP endpoint those hooks posted to, the
+transcript watcher, the session state machine, the "Sign in" button and the automatic
+token renewal. There is no `codenotch-hook.exe` to install any more, and no session list
+on the hover card.
+
+In their place:
+
+| Cell | Source | How it reads it |
+|---|---|---|
+| **WorkBuddy** | Two planes, and the cell carries both. **Balance:** the WorkBuddy desktop app's own session, read only, never refreshed — `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` (falling back to `%APPDATA%`), then `POST https://copilot.tencent.com/v2/billing/meter/get-user-resource`, or `/get-enterprise-user-usage` when the session carries an enterprise id. **Tokens:** the app's own session transcripts, read locally — `~/.workbuddy/projects/**/*.jsonl`, and `~/.workbuddy-ai/projects/**/*.jsonl` for the root 5.5 moved to. | The Credits still held across every active package, as one balance. Only `Status 0` rows count; a package whose quota cannot be read fails the whole reading rather than quietly understating it. A `.logged-out` marker in the canonical directory means signed out, and an unavailable session is never reported as one. WorkBuddy 5.6.0+ seals its credential with a key its own runtime holds: Codenotch cannot open that envelope and says so, and the token windows — which need no credential at all — take the cell over rather than sending you to a sign-in screen that cannot help. |
+| **DeepSeek Harness** | Its own session transcripts under `$DSH_HOME` (or `~/.dsh`): `sessions/<project>/<session>/session[.<v>].jsonl[.zstd]` | Tokens spent today, in the last 7 days and in the last 30 days — a count with no denominator, so the ring draws its track undrawn and the cell prints the number. Zstandard transcripts are read without decompressing the whole file; a half-written tail frame is dropped rather than failing the read; forked sessions have their inherited prefix subtracted; replayed attempts are de-duplicated. Nothing leaves the machine and no credential is involved. |
+
+Providers that are not installed simply do not get a cell. A config saved with the old
+`claude` / `grok` slots is migrated to `workbuddy` / `dsh` on load, in place.
+
 ## What it shows
 
 | Cell | Source | How it reads it |
 |---|---|---|
-| **Claude** | `GET https://api.anthropic.com/api/oauth/usage` with the token Claude Code keeps in `~/.claude/.credentials.json` | Session / weekly windows, 429 back-off with a persisted deadline, stale readings dimmed with their age. Renews that token by running the standalone `claude -p` shortly before it expires (Claude Code inside the desktop app never writes this file), and never sends an expired one. A thin arc spins inside the ring while a Claude session is working, and pulses amber when one is waiting on you (Claude Code hooks + transcript watcher, desktop app included). |
 | **Codex** | The local Codex sign-in in `~/.codex/auth.json` (read only, never refreshed), falling back to the newest session snapshot | Live primary/secondary windows (5h + weekly on paid plans, a monthly window on free) while Codex is signed in; Spark and Code review appear on the hover card when Codex reports them; otherwise the last snapshot, marked stale by its own timestamp. |
 | **Cursor** | The editor's own session from `state.vscdb` → `cursor.com/api/usage-summary` | Included usage / API usage / on-demand, reset at billing-cycle end. Nothing to sign into: it borrows the editor's session, so there is only ever one account. |
-| **Grok** | The Grok CLI's own session in `~/.grok/auth.json` (read only, never refreshed) → `cli-chat-proxy.grok.com/v1/billing?format=credits`, the endpoint that CLI's own `/usage` asks | The weekly Grok Build allowance, with the account on the hover card. Only a session minted by `auth.x.ai` is used — the file can also hold a customer IdP token meant for that customer's private proxy. A fresh weekly period reads 0 %, not "unmetered". |
 | **OpenCode** | OpenCode's own sign-in, read only: the `opencode-go` key in `~/.local/share/opencode/auth.json` → `opencode.ai/zen/go/v1/usage`, or — since OpenCode 1.18 — the OAuth sign-in in `opencode.db` (`credential` table) → `opencode.ai/inference/go/v1/usage` | The Go plan's 5-hour, weekly and monthly windows. A sign-in without a Go plan shows "No OpenCode Go subscription" instead of a ring; Zen pay-as-you-go credit has no balance or usage API, so it is not shown. |
+| **z.ai (GLM)** | The existing Z.AI tool credentials — the GLM Coding Plan key in the environment, in the CLI's config, or in a `~/.claude/settings.json` that points `ANTHROPIC_BASE_URL` at a Z.ai console | The plan's session / weekly windows. |
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
-| **OpenCode Go** | `GET https://opencode.ai/zen/go/v1/usage` | Reads the `opencode-go` key in OpenCode's `auth.json`, or `OPENCODE_APIKEY` when set. The environment key takes precedence. Shows rolling 5-hour, weekly and monthly usage. This is a separate subscription from the Z.ai GLM Coding Plan; its key must not be sent to Z.ai's monitor endpoint. |
 
-Providers that are not installed simply do not get a cell.
+The working-state arc (the thin spinning line inside a ring, and the amber pulse when
+something wants your input) is drawn for whichever provider the activity probe can see:
+Cursor reports its state, Codex and Antigravity are inferred from recent writes. The rest
+have no state to read and simply show no arc.
 
 ### Codex quota recovery
 
@@ -62,22 +81,34 @@ The optional `cargo test --release --locked codex::tests::live_native_quota -- -
 checks the actual native transport against an already signed-in local client;
 it prints no account credentials or quota values and is not run by CI.
 
-### Claude sign-in
+### WorkBuddy sessions
 
-When Claude is signed out, its card offers **Sign in**, which opens the standalone
-Claude Code CLI's browser login (`claude auth login --claudeai`). It is offered on
-the default `~/.claude` account only, since that is the one the CLI signs in.
-Finish in the browser; if it
-displays a code, paste it in the opened terminal, not in Codenotch. The card
-refreshes after the CLI exits without restarting the widget. The native CLI must
-already be installed; missing CLI, cancellation and launch errors are shown.
+There is nothing to sign in to from Codenotch. The WorkBuddy desktop app owns the
+session; Codenotch reads the file it writes and never refreshes, renews or rewrites
+it, and the token never reaches a log line, an event payload or the UI. Sign in — or
+out — in WorkBuddy itself, and the reading follows within a poll.
 
-This explicit action shares a busy guard with automatic token renewal. Only the
-CLI handles OAuth and writes credentials; Codenotch does not receive login codes
-or expose tokens through UI IPC. The interactive child has a 15-minute timeout.
-To read Claude again, click its ring or choose **Refresh now** from the notch's
-right-click menu. HTTP 403 is reported as an access/network refusal rather than claiming
-that a still-valid login has expired. Existing automatic renewal is unchanged.
+Two states are worth telling apart, and are:
+
+- **Absent** — no session file and no logout marker, so WorkBuddy either is not
+  installed or has never signed in. Clicking its cell offers the app's own page.
+- **Unreadable** — the file is there but sealed (`5.6.0` and later encrypt each
+  credential field with a key their runtime holds). That is reported as its own
+  thing, never as "sign in again", because signing in again cannot change it.
+
+Neither state costs the cell its number, because the balance is only one of the two
+planes WorkBuddy is read through. The other is the app's own session transcripts,
+totalled locally as tokens for today, the last seven days and the last thirty. They
+need no credential at all, so a sealed session loses you the balance and nothing
+else: the token windows lead the ring and the cell says why the balance is missing.
+
+The counts are the tokens WorkBuddy actually had to process — per call,
+`(input − cached input) + output`. `input` is the whole context that call re-sent, so
+adding `total_tokens` up would charge the same history once per call and inflate a
+long session by two orders of magnitude. A transcript is folded once and cached
+against its size and mtime, and a file last written before the window is skipped
+without being opened, because records are appended and can never be newer than the
+file that holds them.
 
 ### Antigravity
 
@@ -94,10 +125,9 @@ shows an error or the last reading marked stale. Codenotch does not automate sig
 ## Install / build
 
 Download [`Codenotch-Setup.exe`](https://github.com/vinzdg/codenotch/releases/latest/download/Codenotch-Setup.exe)
-from the latest release. It installs for the current user without administrator rights, puts
-`codenotch-hook.exe` beside the app where **Install hooks** looks for it, and fetches WebView2 if
-Windows does not already have it. The installer is not code-signed, so SmartScreen stops it the
-first time with *Windows protected your PC*: choose **More info**, then **Run anyway**.
+from the latest release. It installs for the current user without administrator rights and fetches
+WebView2 if Windows does not already have it. The installer is not code-signed, so SmartScreen
+stops it the first time with *Windows protected your PC*: choose **More info**, then **Run anyway**.
 
 ### Updates
 
@@ -136,16 +166,14 @@ To build from source instead — prerequisites: Rust (MSVC toolchain), WebView2 
 # from this directory (the repo root here; `windows/` inside the upstream repo)
 cargo build --release
 .\target\release\codenotch.exe          # pill appears on the right edge of the primary monitor
-.\target\release\codenotch.exe doctor   # self-diagnosis: credentials, data sources, icons, hooks
+.\target\release\codenotch.exe doctor   # self-diagnosis: config, credentials, data sources, icons
 ```
 
 To build the installer the way the Windows Package workflow does:
 
 ```powershell
-# the hook gets its own target dir, so the bundler never copies it onto itself
-cargo build --release --locked -p codenotch-hook --target-dir target/hook
 cd codenotch
-npx @tauri-apps/cli@2 build --config tauri.bundle.conf.json
+npx @tauri-apps/cli@2 build
 # → ..\target\release\bundle\nsis\Codenotch_<version>_x64-setup.exe
 ```
 
@@ -153,12 +181,13 @@ Tray menu: the readings themselves — a line per provider with its headline fig
 one line per limit window — then **Refresh all**, **Settings…** and **Quit Codenotch**. Clicking a
 provider's line re-reads that provider. Everything else is in the settings window: which rings the
 notch shows, its size, the weekly ring, which screen edge it sits on and which screen,
-start with Windows, the language, Claude Code hooks, reset
+start with Windows, the language, reset
 position, and the data folder (`%APPDATA%\codenotch` — logs, persisted readings, icon overrides).
 
 Notch: clicking a ring re-reads that provider, as on the Mac. Right-clicking the notch or its card
-offers **Refresh now**, the provider's usage page (**Open claude.ai**, **Open chatgpt.com**, …) and
-**Quit Codenotch**. Neither click, nor the tray, asks Claude again while its rate-limit wait runs.
+offers **Refresh now**, the provider's usage page (**Open codebuddy.ai**, **Open chatgpt.com**, …)
+and **Quit Codenotch**. A provider that is inside its own rate-limit wait keeps it: asking early
+would spend a request and double the wait.
 
 ### Where the notch sits
 
@@ -188,8 +217,8 @@ open, or Show set to Always show, nothing is read.
 
 Provider marks are the SVGs from [`@lobehub/icons-static-svg`](https://github.com/lobehub/lobe-icons)
 (MIT), embedded unmodified — see `codenotch/glyphs/NOTICE.md`. Drop your own
-`claude|codex|cursor|gemini.svg` (or `.png`) into `%APPDATA%\codenotch\glyphs\` to override.
-The marks remain the trademarks of their owners.
+`workbuddy|codex|cursor|dsh|gemini|opencode.svg` (or `.png`) into `%APPDATA%\codenotch\glyphs\`
+to override. The marks remain the trademarks of their owners.
 
 ### Translations
 
@@ -197,18 +226,16 @@ Three surfaces draw their own text, so each keeps its own table:
 
 | Surface | Table | Languages today |
 |---|---|---|
-| Tray menu | `codenotch/src/i18n.rs` (`tr`), `codenotch/src/traymenu.rs` (`label`) | en · ru · zh · ja · ko · uk |
-| Hover card | `codenotch/ui/notch.html` (`TEXT`, `PATTERNS`, `UI`) | en · ru · zh |
-| Settings window | `codenotch/ui/settings.html` (`STATIC_TEXT`, `STATUS_TEXT`) | en · ru · zh · ja · ko |
+| Tray menu | `codenotch/src/i18n.rs` (`tr`), `codenotch/src/traymenu.rs` (`label`) | en · ru · zh · ja · ko · uk · pt-BR |
+| Hover card | `codenotch/ui/notch.html` (`TEXT`, `PATTERNS`, `UI`) | en · ru · zh · zh-Hant · ko · uk · pt-BR |
+| Settings window | `codenotch/ui/settings.html` (`STATIC_TEXT`, `STATUS_TEXT`) | en · ru · zh · ja · ko · uk · pt-BR |
 
 Help is welcome on the gaps, which fall back to English rather than breaking anything:
 
-- the hover card has no Japanese, Korean or Ukrainian;
-- the settings window has no Ukrainian, although the tray menu and the language picker have had it
-  since Ukrainian was added;
-- Korean has none of the window names the Mac's catalog carries — `Current session`, `Weekly limit`,
-  `Monthly limit`, `5-hour Limit`, `Included usage`, `API usage` — because the catalog has no Korean
-  to take them from.
+- the hover card has no Japanese;
+- the provider notes — the sentences `workbuddy.rs` and `dsh.rs` put on the card — are translated
+  into the two Chinese variants only, so another language shows them in English. Each one is a whole
+  sentence, so it arrives through `PATTERNS` rather than `TEXT`.
 
 Keys are the exact English string. A string the Mac also shows should be taken from
 `Sources/Localizable.xcstrings` rather than translated afresh, so both platforms word it the same
@@ -220,7 +247,10 @@ fails if the menu and the card stop naming the same window.
 ```
 .
 ├── codenotch/          the Windows app (pill, hover card, settings, providers)
-└── codenotch-hook/     tiny helper Claude Code calls to report session events
+│   ├── src/            Rust: one module per provider, plus the window, tray and settings plumbing
+│   ├── ui/             the three pages (notch, settings, dropzones)
+│   └── glyphs/         the provider marks compiled into the exe
+└── scripts/            Node checks that run over the pages (cargo never reads them)
 ```
 
 A pull request that touches this tree is built and tested; the check is skipped
@@ -230,8 +260,15 @@ inside forks until the pull request is opened here.
 
 This port follows the upstream design and provider semantics. It is developed at
 [Im-Midi/codenotch-windows](https://github.com/Im-Midi/codenotch-windows) and offered to the
-upstream project as its `windows/` tree; the two are kept in sync. Session detection
-originated in [Im-Midi/Pac-Man](https://github.com/Im-Midi/Pac-Man) (MIT).
+upstream project as its `windows/` tree; the two are kept in sync — apart from the two provider
+slots above, which this build rewrites for WorkBuddy and DeepSeek Harness.
+
+The WorkBuddy and DeepSeek Harness adapters are ported from
+[Token Monitor](https://github.com/Javis603/token-monitor) (MIT): the WorkBuddy billing client
+follows its `src/shared/providers/workbuddy/` and `src/electron/providers/workbuddy/localAuth.js`,
+its token plane follows the `workbuddy` source roots in `src/shared/clientSources.js` (read
+directly rather than through tokscale), and the DeepSeek Harness transcript reader follows its
+`src/shared/providers/dsh/`.
 
 ## License
 

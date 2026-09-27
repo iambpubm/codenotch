@@ -238,7 +238,7 @@ pub fn label(name: &str, lang: &str) -> String {
     translated.into()
 }
 
-/// "Claude — 61%", plus how old the reading is once it has gone stale.
+/// "WorkBuddy — 61%", plus how old the reading is once it has gone stale.
 ///
 /// The fraction rather than a rounded percentage: Antigravity publishes lanes like 0.5 %, and a
 /// header reading 1 % above a line reading 0.5 % is the app contradicting itself.
@@ -397,16 +397,16 @@ mod tests {
 
     #[test]
     fn a_header_carries_the_age_only_once_the_reading_is_old() {
-        assert_eq!(header("Claude", Some(0.61), None, 0, "en"), "Claude — 61%");
-        assert_eq!(header("Claude", Some(0.61), Some(0), 20 * MIN, "en"), "Claude — 61% · 20m ago");
+        assert_eq!(header("WorkBuddy", Some(0.61), None, 0, "en"), "WorkBuddy — 61%");
+        assert_eq!(header("WorkBuddy", Some(0.61), Some(0), 20 * MIN, "en"), "WorkBuddy — 61% · 20m ago");
         assert_eq!(header("Cursor", None, None, 0, "en"), "Cursor — —");
     }
 
     /// A reading taken seconds ago says nothing about its age, however it is flagged.
     #[test]
     fn an_age_under_a_minute_is_left_unsaid() {
-        assert_eq!(header("Claude", Some(0.07), Some(0), 30_000, "en"), "Claude — 7%");
-        assert_eq!(header("Claude", Some(0.07), Some(0), 90_000, "en"), "Claude — 7% · 1m ago");
+        assert_eq!(header("WorkBuddy", Some(0.07), Some(0), 30_000, "en"), "WorkBuddy — 7%");
+        assert_eq!(header("WorkBuddy", Some(0.07), Some(0), 90_000, "en"), "WorkBuddy — 7% · 1m ago");
     }
 
     /// Antigravity reports lanes below one percent; rounding the header to 1 % while the line under

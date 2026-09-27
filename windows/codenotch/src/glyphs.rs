@@ -8,7 +8,8 @@
 //!
 //! None of those → the page falls back to a letter.
 //! SVGs are inlined into the DOM as text (`fill="currentColor"` follows the CSS white/dimmed state);
-//! PNGs and app icons go through <img>. Ids match the page and upstream: claude / codex / cursor / grok / gemini / opencode.
+//! PNGs and app icons go through <img>. Ids match the page exactly:
+//! workbuddy / codex / cursor / dsh / gemini / opencode.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -26,14 +27,16 @@ pub struct Glyph {
     pub source: String,
 }
 
-pub const IDS: [&str; 6] = ["claude", "codex", "cursor", "grok", "gemini", "opencode"];
+pub const IDS: [&str; 6] = ["workbuddy", "codex", "cursor", "dsh", "gemini", "opencode"];
 
-/// Built-in artwork (@lobehub/icons-static-svg, MIT): the OpenAI mark for codex (matching upstream's glyph choice), the Antigravity mark for gemini
+/// Built-in artwork (@lobehub/icons-static-svg, MIT): the OpenAI mark for codex (matching upstream's
+/// glyph choice), the Antigravity mark for gemini, the WorkBuddy and DeepSeek Harness marks taken
+/// from the same set.
 const BUILTIN: [(&str, &str); 6] = [
-    ("claude", include_str!("../glyphs/claude.svg")),
+    ("workbuddy", include_str!("../glyphs/workbuddy.svg")),
     ("codex", include_str!("../glyphs/codex.svg")),
     ("cursor", include_str!("../glyphs/cursor.svg")),
-    ("grok", include_str!("../glyphs/grok.svg")),
+    ("dsh", include_str!("../glyphs/dsh.svg")),
     ("gemini", include_str!("../glyphs/gemini.svg")),
     ("opencode", include_str!("../glyphs/opencode.svg")),
 ];
@@ -141,17 +144,13 @@ fn app_candidates(id: &str) -> Vec<PathBuf> {
     let Some(local) = dirs::data_local_dir() else { return v };
     let programs = local.join("Programs");
     match id {
-        "claude" => {
-            v.push(local.join("AnthropicClaude").join("claude.exe"));
-            if let Ok(rd) = std::fs::read_dir(local.join("AnthropicClaude")) {
-                for e in rd.flatten() {
-                    if e.file_name().to_string_lossy().starts_with("app-") {
-                        v.push(e.path().join("claude.exe"));
-                    }
-                }
-            }
-            v.push(programs.join("Claude").join("Claude.exe"));
-            v.push(programs.join("claude-desktop").join("Claude.exe"));
+        // The WorkBuddy desktop app (an Electron shell, installed per-user by default); the
+        // CodeBuddy paths are the same lineage, so a machine carrying either still gets a mark.
+        "workbuddy" => {
+            v.push(local.join("Programs").join("WorkBuddy").join("WorkBuddy.exe"));
+            v.push(programs.join("WorkBuddy").join("WorkBuddy.exe"));
+            v.push(local.join("Programs").join("CodeBuddy").join("CodeBuddy.exe"));
+            v.push(programs.join("CodeBuddy").join("CodeBuddy.exe"));
         }
         "codex" => {
             v.push(programs.join("ChatGPT").join("ChatGPT.exe"));
@@ -309,7 +308,11 @@ pub fn collect() -> HashMap<String, Glyph> {
 /// For doctor
 pub fn probe() -> String {
     let m = collect();
-    let mut lines = vec![format!("glyph directory: {} (drop claude/codex/cursor/grok/gemini/opencode .svg or .png files here)", user_dir().display())];
+    let mut lines = vec![format!(
+        "glyph directory: {} (drop {}.svg or .png files here to override the built-in artwork)",
+        user_dir().display(),
+        IDS.join("/")
+    )];
     for id in IDS {
         lines.push(match m.get(id) {
             Some(g) => format!("  {id}: {} ← {}", g.kind, g.source),

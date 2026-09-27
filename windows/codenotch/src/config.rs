@@ -299,6 +299,9 @@ pub fn load() -> Config {
     }
 
     carry_shared_position(&mut cfg);
+    // A ring the notch no longer has a provider for is dropped by the page anyway; renaming the two
+    // slots this build replaced keeps a saved selection meaning what it meant.
+    migrate_replaced_providers(&mut cfg);
     // A selection saved before GLM existed gets the GLM ring back exactly once.
     migrate_glm_notch(&mut cfg, &raw);
     // Likewise for OpenCode.
@@ -315,6 +318,49 @@ pub fn load() -> Config {
     cfg.color_transition = color_transition_or_step(&cfg.color_transition);
     cfg.theme = theme_or_system(&cfg.theme);
     cfg
+}
+
+/// The two provider slots this build replaced: `claude` became WorkBuddy, `grok` became DeepSeek
+/// Harness. A config saved before that keeps its rings in the same places rather than losing them,
+/// and a duplicate that the rename creates (say `workbuddy` was already ticked) is dropped.
+fn migrate_replaced_providers(cfg: &mut Config) {
+    let rename = |id: &str| match id {
+        "claude" => "workbuddy",
+        "grok" => "dsh",
+        other => other,
+    };
+    for p in cfg.notch_providers.iter_mut() {
+        *p = rename(p).to_string();
+    }
+    for s in cfg.notch_slots.iter_mut() {
+        s.provider = rename(&s.provider).to_string();
+    }
+    dedupe_slots(&mut cfg.notch_slots);
+    dedupe_providers(&mut cfg.notch_providers);
+}
+
+fn dedupe_slots(slots: &mut Vec<TraySlot>) {
+    let mut seen: Vec<String> = Vec::new();
+    slots.retain(|s| {
+        if seen.contains(&s.provider) {
+            false
+        } else {
+            seen.push(s.provider.clone());
+            true
+        }
+    });
+}
+
+fn dedupe_providers(ids: &mut Vec<String>) {
+    let mut seen: Vec<String> = Vec::new();
+    ids.retain(|id| {
+        if seen.contains(id) {
+            false
+        } else {
+            seen.push(id.clone());
+            true
+        }
+    });
 }
 
 fn migrate_glm_notch(cfg: &mut Config, raw: &Option<String>) {

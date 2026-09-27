@@ -1,8 +1,7 @@
-//! "Is it working?" for the non-Claude providers (Claude's local sessions go through the hooks +
-//! transcript-watcher engine, not here).
+//! "Is it working?" for the providers the notch tracks.
 //!
-//! None of the three has a state field like Claude Code's, so each is labelled with whatever it
-//! can honestly provide (the same trade-off upstream made):
+//! None of the three publishes a state field, so each is labelled with whatever it can honestly
+//! provide (the same trade-off upstream made):
 //!   - Cursor: the `composerHeaders` rows (JSON) in the editor's `state.vscdb` — `unfinishedRunAt`
 //!     is set for the duration of a run and cleared when it ends; `hasBlockingPendingActions` /
 //!     `hasPendingPlan` = waiting on you. This is **real state**. The database is in WAL mode, so
@@ -12,16 +11,13 @@
 //!     `~/.codex/thread_history_1.sqlite` (status = inProgress with an empty completed_at = running)
 //!     — real state. The CLI / VS Code extension fall back to classifying the last entry of the
 //!     rollout, with a silence threshold that depends on the entry type.
-//!   - Claude cloud sessions: no local transcript, so they are inferred from the desktop app's
-//!     network throughput (marked ~).
 //!   - Antigravity: transcript.jsonl is appended during a run (each step is written only once it
 //!     completes, so status is always DONE and useless); written within the last 45 s = working
 //!     (the model can think for a long time between steps, hence the wide window).
 //!
 //! Polled every 2 s (upstream cadence), broadcast only on change. Cost discipline: database
 //! connections stay open, nothing is re-queried unless the file's mtime changed, the rollout tail
-//! is re-read only when its mtime changed, PowerShell runs only occasionally to find the network
-//! process pid, and the thread runs at lowered priority.
+//! is re-read only when its mtime changed, and the thread runs at lowered priority.
 
 use crate::AppState;
 use serde::Serialize;
@@ -33,7 +29,7 @@ const ANTIGRAVITY_STALE_MS: u64 = 45_000;
 
 #[derive(Clone, Serialize, Debug, PartialEq)]
 pub struct Activity {
-    /// Provider id other than claude: codex / cursor / gemini
+    /// Provider id: codex / cursor / gemini
     pub provider: String,
     /// busy | waiting
     pub state: String,
@@ -362,139 +358,6 @@ fn codex_activity(ctx: &mut Ctx) -> Vec<Activity> {
     ctx.rollout_last.clone()
 }
 
-// ---------------- Claude desktop (cloud sessions): network-activity heuristic ----------------
-
-/// Cloud sessions leave no local transcript, so the four-state engine cannot see them. Next best
-/// thing: while output is streaming, the Claude desktop app keeps receiving data from the network
-/// (Winsock goes through AFD IOCTLs, which land in the Other counter of the process I/O counters).
-/// Sampled every 2 s; a rate above the threshold means "streaming". Explicitly marked as inferred
-/// (~); the first 60 samples go to run.log so the threshold can be calibrated.
-struct IoSample {
-    at: u64,
-    other: u64,
-    read: u64,
-}
-static CLAUDE_IO: std::sync::Mutex<Option<IoSample>> = std::sync::Mutex::new(None);
-static CLAUDE_LAST_ACTIVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-const CLAUDE_RATE_BPS: f64 = 2_500.0; // socket traffic of the network service process only; the idle heartbeat is far below this, streaming far above
-const CLAUDE_HOLD_MS: u64 = 10_000; // tool calls often leave 2–4 s gaps with zero traffic; holding for 10 s avoids flicker
-static CLAUDE_HITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-/// Pid of the Claude desktop app's (Electron) network service child: its command line contains
-/// `network.mojom.NetworkService`. All socket traffic goes through it, so the IOCTL noise of the
-/// GPU/renderer processes (driver calls count as Other too) stays out. Found once and cached;
-/// looked up again when the process disappears or every 5 minutes. The command line comes from
-/// PowerShell, so that cost is paid only on a lookup.
-static CLAUDE_NET_PID: std::sync::Mutex<(u32, u64)> = std::sync::Mutex::new((0, 0));
-
-#[cfg(windows)]
-fn claude_net_pid(maps: &crate::focus::ProcMaps) -> Option<u32> {
-    let now = now_ms();
-    {
-        let g = CLAUDE_NET_PID.lock().unwrap();
-        let (pid, at) = *g;
-        if pid != 0 && maps.name.get(&pid).map(|n| n == "claude.exe").unwrap_or(false) && now.saturating_sub(at) < 5 * 60_000 {
-            return Some(pid);
-        }
-        // Cache a miss for 60 s too: otherwise a PowerShell run every 2 s (a few hundred ms of CPU each) becomes the next source of lag
-        if pid == 0 && at != 0 && now.saturating_sub(at) < 60_000 {
-            return None;
-        }
-        // Claude desktop is not running at all: no need for PowerShell
-        if !maps.name.values().any(|n| n == "claude.exe") {
-            return None;
-        }
-    }
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | Where-Object { $_.CommandLine -like '*network.mojom.NetworkService*' } | Select-Object -First 1 -ExpandProperty ProcessId",
-    ]);
-    cmd.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000);
-    let pid: u32 = match cmd.output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok()) {
-        Some(p) => p,
-        None => {
-            *CLAUDE_NET_PID.lock().unwrap() = (0, now);
-            return None;
-        }
-    };
-    *CLAUDE_NET_PID.lock().unwrap() = (pid, now);
-    crate::applog(&format!("claude net pid = {pid}"));
-    Some(pid)
-}
-
-#[cfg(windows)]
-fn claude_io_bytes() -> Option<(u64, u64)> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{GetProcessIoCounters, OpenProcess, IO_COUNTERS, PROCESS_QUERY_LIMITED_INFORMATION};
-    let maps = crate::focus::proc_maps();
-    let net_pid = claude_net_pid(&maps)?;
-    let mut other = 0u64;
-    let mut read = 0u64;
-    let mut n = 0;
-    for pid in maps.name.keys() {
-        if *pid != net_pid {
-            continue;
-        }
-        unsafe {
-            let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, *pid) else { continue };
-            let mut io = IO_COUNTERS::default();
-            if GetProcessIoCounters(h, &mut io).is_ok() {
-                other = other.saturating_add(io.OtherTransferCount);
-                read = read.saturating_add(io.ReadTransferCount);
-                n += 1;
-            }
-            let _ = CloseHandle(h);
-        }
-    }
-    if n == 0 {
-        None
-    } else {
-        Some((other, read))
-    }
-}
-#[cfg(not(windows))]
-fn claude_io_bytes() -> Option<(u64, u64)> {
-    None
-}
-
-fn claude_activity() -> Vec<Activity> {
-    let now = now_ms();
-    let Some((other, read)) = claude_io_bytes() else { return vec![] };
-    let mut guard = CLAUDE_IO.lock().unwrap();
-    let (rate_other, rate_read) = match guard.as_ref() {
-        Some(prev) if now > prev.at && other >= prev.other && read >= prev.read => {
-            let dt = (now - prev.at) as f64 / 1000.0;
-            ((other - prev.other) as f64 / dt, (read - prev.read) as f64 / dt)
-        }
-        _ => (0.0, 0.0),
-    };
-    *guard = Some(IoSample { at: now, other, read });
-    drop(guard);
-    static SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    if SAMPLES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 240 {
-        crate::applog(&format!("claude io: net {:.0} B/s, disk {:.0} B/s", rate_other, rate_read));
-    }
-    // Two consecutive samples (≈4 s) above the threshold; a single spike (heartbeat, sync) does not count
-    if rate_other >= CLAUDE_RATE_BPS {
-        if CLAUDE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 1 {
-            CLAUDE_LAST_ACTIVE.store(now, std::sync::atomic::Ordering::Relaxed);
-        }
-    } else {
-        CLAUDE_HITS.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-    let last = CLAUDE_LAST_ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
-    if last > 0 && now.saturating_sub(last) <= CLAUDE_HOLD_MS {
-        vec![Activity { provider: "claude".into(), state: "busy".into(), name: "Claude".into(), detail: "Streaming (network)".into(), since: last }]
-    } else {
-        vec![]
-    }
-}
-
 // ---------------- Antigravity ----------------
 
 fn antigravity_activity() -> Vec<Activity> {
@@ -529,7 +392,6 @@ fn presence() -> Presence {
 
 fn read_all(p: Presence, ctx: &mut Ctx) -> Vec<Activity> {
     let mut all = Vec::new();
-    all.extend(claude_activity());
     if p.cursor {
         all.extend(cursor_activity(ctx));
     }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["codenotch", "codenotch-hook"]
+members = ["codenotch"]
 resolver = "2"
 
 [profile.release]

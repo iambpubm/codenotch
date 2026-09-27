@@ -4,19 +4,16 @@ mod autostart;
 mod backdrop;
 mod config;
 mod doctor;
-mod focus;
-mod hooks_install;
 mod i18n;
 mod notchmenu;
-mod server;
-mod state;
 mod tray;
 mod traymenu;
 mod usage;
-mod claude_auth;
+mod workbuddy;
+mod workbuddy_tokens;
 mod codex;
 mod cursor;
-mod grok;
+mod dsh;
 mod antigravity;
 mod glm;
 mod opencode;
@@ -26,7 +23,6 @@ mod trayicon;
 mod activity;
 mod diag;
 mod dropzones;
-mod watcher;
 mod settings_window;
 mod topmost;
 mod updater;
@@ -48,14 +44,14 @@ pub const BUILD: &str = "r31";
 pub const NOTCH_LONG: f64 = 650.0;
 
 pub struct AppState {
-    pub store: Mutex<state::Store>,
     pub cfg: Mutex<config::Config>,
-    pub usage: Mutex<usage::UsageSnapshot>,
+    /// WorkBuddy credits, read from WorkBuddy's own meter with its own sign-in. (The Claude slot.)
+    pub workbuddy: Mutex<usage::UsageSnapshot>,
     /// Codex snapshot (same UsageSnapshot shape; status may also be none/absent)
     pub codex: Mutex<usage::UsageSnapshot>,
     pub cursor: Mutex<usage::UsageSnapshot>,
-    /// Grok Build credits, read from the Grok CLI's own session
-    pub grok: Mutex<usage::UsageSnapshot>,
+    /// DeepSeek Harness token spend, summed from its own local session transcripts. (The Grok slot.)
+    pub dsh: Mutex<usage::UsageSnapshot>,
     pub antigravity: Mutex<usage::UsageSnapshot>,
     /// GLM Coding Plan snapshot, read from the existing Z.AI tool credentials.
     pub glm: Mutex<usage::UsageSnapshot>,
@@ -63,7 +59,7 @@ pub struct AppState {
     pub opencode: Mutex<usage::UsageSnapshot>,
     /// Provider glyph cache, collected at launch and again on a tray refresh
     pub glyphs: Mutex<std::collections::HashMap<String, glyphs::Glyph>>,
-    /// Working state of the non-Claude providers (Cursor reports it; Codex and Antigravity are inferred from recent writes)
+    /// Working state of the providers that report it (Cursor reports it; Codex and Antigravity are inferred from recent writes)
     pub activity: Mutex<Vec<activity::Activity>>,
 }
 
@@ -82,14 +78,32 @@ pub fn ui_scale(app: &AppHandle) -> f64 {
     config::snap_scale(c.scale)
 }
 
-pub fn broadcast(app: &AppHandle) {
+/// What a page needs to draw itself: the language, and whether reset times use a 24-hour clock.
+///
+/// Upstream this carried a live session list, fed by Claude Code hooks. Those hooks are gone, so
+/// this is the whole of it — the notch's own readings all travel on their own provider events.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct PageState {
+    /// The language the user chose (may be "auto")
+    pub lang: String,
+    /// The language actually resolved here (WebView2's navigator.language is unreliable)
+    pub lang_resolved: String,
+    /// From the Windows region settings
+    pub clock_24h: bool,
+}
+
+pub(crate) fn page_state(app: &AppHandle) -> PageState {
     let st = app.state::<AppState>();
-    let snap = {
-        let store = st.store.lock().unwrap();
-        let cfg = st.cfg.lock().unwrap();
-        store.snapshot(&cfg.lang, &resolved_lang(&cfg.lang), i18n::clock_24h(), false)
-    };
-    let _ = app.emit("state", &snap);
+    let cfg = st.cfg.lock().unwrap();
+    PageState {
+        lang: cfg.lang.clone(),
+        lang_resolved: resolved_lang(&cfg.lang),
+        clock_24h: i18n::clock_24h(),
+    }
+}
+
+pub fn broadcast(app: &AppHandle) {
+    let _ = app.emit("state", page_state(app));
 }
 
 /// A monitor reduced to the numbers placement needs, so the borrowed `Monitor` does not have to be
@@ -656,36 +670,24 @@ pub fn apply_lang(app: &AppHandle, lang: &str) {
 // ---------------- commands ----------------
 
 #[tauri::command]
-fn get_state(state: tauri::State<AppState>) -> state::Snapshot {
-    let store = state.store.lock().unwrap();
-    let cfg = state.cfg.lock().unwrap();
-    store.snapshot(&cfg.lang, &resolved_lang(&cfg.lang), i18n::clock_24h(), false)
+fn get_state(app: AppHandle) -> PageState {
+    page_state(&app)
 }
 
 #[tauri::command]
-fn get_usage(state: tauri::State<AppState>) -> usage::UsageSnapshot {
-    state.usage.lock().unwrap().clone()
+fn get_workbuddy(state: tauri::State<AppState>) -> usage::UsageSnapshot {
+    state.workbuddy.lock().unwrap().clone()
 }
 
-#[tauri::command]
-fn claude_sign_in() -> Result<(), String> { claude_auth::start_login() }
-
-#[tauri::command]
-fn get_claude_auth() -> claude_auth::AuthState { claude_auth::state() }
-
-/// Asks one provider to read again, and says whether a reading is on its way. Claude's rate-limit
-/// wait stands, as on the Mac: asking early spends a request and can double the wait.
-pub(crate) fn refresh_provider(app: &AppHandle, provider: &str) -> bool {
+/// Asks one provider to read again, and says whether a reading is on its way. A provider that is
+/// being rate limited keeps its own wait (Codex, GLM and OpenCode each hold their own backoff), so
+/// asking early costs nothing beyond the nudge.
+pub(crate) fn refresh_provider(_app: &AppHandle, provider: &str) -> bool {
     match provider {
-        "claude" => {
-            if app.state::<AppState>().usage.lock().unwrap().backoff_until > now_ms() {
-                return false;
-            }
-            usage::request_refresh();
-        }
+        "workbuddy" => workbuddy::request_refresh(),
         "codex" => codex::request_refresh(),
         "cursor" => cursor::request_refresh(),
-        "grok" => grok::request_refresh(),
+        "dsh" => dsh::request_refresh(),
         "gemini" => antigravity::request_refresh(),
         "glm" => glm::request_refresh(),
         "opencode" => opencode::request_refresh(),
@@ -756,8 +758,8 @@ fn open_data_dir() {
 }
 
 #[tauri::command]
-fn get_grok(state: tauri::State<AppState>) -> usage::UsageSnapshot {
-    state.grok.lock().unwrap().clone()
+fn get_dsh(state: tauri::State<AppState>) -> usage::UsageSnapshot {
+    state.dsh.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -773,10 +775,10 @@ fn get_codex(state: tauri::State<AppState>) -> usage::UsageSnapshot {
 /// A provider's usage page, and the host the notch menu names it by.
 pub(crate) fn provider_page(provider: &str) -> Option<(&'static str, &'static str)> {
     Some(match provider {
-        "claude" => ("https://claude.ai/settings/usage", "claude.ai"),
+        "workbuddy" => ("https://www.codebuddy.ai/", "codebuddy.ai"),
         "codex" => ("https://chatgpt.com/#settings/Account", "chatgpt.com"),
         "cursor" => ("https://cursor.com/dashboard", "cursor.com"),
-        "grok" => ("https://grok.com/?_s=usage", "grok.com"),
+        "dsh" => ("https://platform.deepseek.com/usage", "deepseek.com"),
         "gemini" => ("https://antigravity.google", "antigravity.google"),
         "glm" => ("https://z.ai/manage-apikey/apikey-list", "z.ai"),
         "opencode" => ("https://opencode.ai", "opencode.ai"),
@@ -1034,29 +1036,6 @@ fn log_js(msg: String) {
 }
 
 #[tauri::command]
-fn focus_session(app: AppHandle, id: String) -> bool {
-    let ppid = {
-        let st = app.state::<AppState>();
-        let store = st.store.lock().unwrap();
-        store.ppid_of(&id)
-    };
-    match ppid {
-        Some(p) => focus::focus_terminal(p),
-        None => focus::focus_claude_desktop(),
-    }
-}
-
-#[tauri::command]
-fn dismiss_session(app: AppHandle, id: String) {
-    {
-        let st = app.state::<AppState>();
-        let mut store = st.store.lock().unwrap();
-        store.dismiss(&id);
-    }
-    broadcast(&app);
-}
-
-#[tauri::command]
 fn set_lang(app: AppHandle, lang: String) {
     apply_lang(&app, &lang);
 }
@@ -1235,10 +1214,15 @@ fn ring_window<'a>(
 ) -> Option<&'a usage::LimitWindow> {
     let by_id = |id: &str| windows.iter().find(|w| w.id == id);
     match provider {
-        "claude" => by_id("session"),
+        // WorkBuddy leads with the Credits balance when the credential can be read at all. On a
+        // machine where WorkBuddy sealed it, the cell carries local token usage instead, and the
+        // day window is what the ring means.
+        "workbuddy" => by_id("credits").or_else(|| by_id("today")),
         "codex" => by_id("primary"),
         "cursor" => by_id("included").or_else(|| by_id("api")),
-        "grok" => by_id("credits").or_else(|| windows.first()),
+        // DeepSeek Harness publishes counts, not fractions: the day window leads the ring, and a
+        // count window keeps its track undrawn either way (see ring_fraction).
+        "dsh" => by_id("today").or_else(|| windows.first()),
         // The Mac sets headlineID "session", weeklyID "weekly". Without this the
         // plan falls through to Antigravity's lane picker and the ring shows the
         // tightest window it can find instead of the session.
@@ -1298,11 +1282,11 @@ pub(crate) fn snapshot_of(app: &AppHandle, id: &str) -> usage::UsageSnapshot {
     match id {
         "codex" => st.codex.lock().unwrap().clone(),
         "cursor" => st.cursor.lock().unwrap().clone(),
-        "grok" => st.grok.lock().unwrap().clone(),
+        "dsh" => st.dsh.lock().unwrap().clone(),
         "gemini" => st.antigravity.lock().unwrap().clone(),
         "glm" => st.glm.lock().unwrap().clone(),
         "opencode" => st.opencode.lock().unwrap().clone(),
-        _ => st.usage.lock().unwrap().clone(),
+        _ => st.workbuddy.lock().unwrap().clone(),
     }
 }
 
@@ -1537,20 +1521,6 @@ fn set_autostart(on: bool) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn get_hooks_installed() -> bool {
-    hooks_install::is_installed()
-}
-
-#[tauri::command]
-fn set_hooks_installed(on: bool) -> Result<String, String> {
-    if on {
-        hooks_install::install()
-    } else {
-        hooks_install::uninstall()
-    }
-}
-
-#[tauri::command]
 fn reset_notch_position(app: AppHandle) {
     reset_bar(&app);
 }
@@ -1685,16 +1655,16 @@ pub fn provider_label(id: &str) -> &'static str {
     match id {
         "codex" => "Codex",
         "cursor" => "Cursor",
-        "grok" => "Grok",
+        "dsh" => "DeepSeek Harness",
         "gemini" => "Antigravity",
         "glm" => "z.ai",
         "opencode" => "OpenCode",
-        _ => "Claude",
+        _ => "WorkBuddy",
     }
 }
 
 /// Every provider the tray menu can offer, in the order the notch shows them.
-pub const TRAY_PROVIDER_IDS: [&str; 7] = ["claude", "codex", "glm", "opencode", "cursor", "grok", "gemini"];
+pub const TRAY_PROVIDER_IDS: [&str; 7] = ["workbuddy", "codex", "glm", "opencode", "cursor", "dsh", "gemini"];
 
 /// Keeps the tray menu current. macOS rebuilds its menu as it opens; Tauri has no such hook, so it
 /// is rebuilt whenever a reading changes, and once a minute besides — otherwise "Resets in 12 min"
@@ -1722,39 +1692,6 @@ fn start_menu_updater(app: AppHandle) {
     });
 }
 
-/// Seen-clears-it: looking at a session acknowledges it (engine behaviour, unchanged)
-#[cfg(windows)]
-fn ack_scan(app: &AppHandle) -> bool {
-    let need = {
-        let st = app.state::<AppState>();
-        let store = st.store.lock().unwrap();
-        store.has_done()
-    };
-    if !need {
-        return false;
-    }
-    let fg = focus::fg_pid();
-    if fg == 0 {
-        return false;
-    }
-    let maps = focus::proc_maps();
-    let fg_name = maps.name.get(&fg).cloned().unwrap_or_default();
-    let fg_is_claude_desktop = fg_name.contains("claude") && !fg_name.contains("codenotch");
-    let st = app.state::<AppState>();
-    let mut store = st.store.lock().unwrap();
-    store.ack_done(|s| {
-        if s.ppid == 0 {
-            fg_is_claude_desktop
-        } else {
-            focus::pid_hits_chain(fg, &focus::chain_of(s.ppid, &maps.ppid), &maps)
-        }
-    })
-}
-#[cfg(not(windows))]
-fn ack_scan(_app: &AppHandle) -> bool {
-    false
-}
-
 // ---------------- main ----------------
 
 #[cfg(windows)]
@@ -1778,12 +1715,12 @@ fn report(r: Result<String, String>) {
 }
 
 /// The subcommands that print to the parent console; only those may attach to it.
-const CONSOLE_CMDS: [&str; 4] = ["install-hooks", "uninstall-hooks", "autostart", "doctor"];
+const CONSOLE_CMDS: [&str; 2] = ["autostart", "doctor"];
 
 /// ureq reads a proxy only from the environment. Started from Explorer or the Run key that
 /// variable is usually absent even where a system proxy is configured, and a machine that reaches
-/// api.anthropic.com only through that proxy then reads nothing at all — so the WinINet setting
-/// (Internet Options) is copied into the environment before the first request.
+/// the vendors' endpoints only through that proxy then reads nothing at all — so the WinINet
+/// setting (Internet Options) is copied into the environment before the first request.
 /// An explicit HTTPS_PROXY/HTTP_PROXY always wins.
 #[cfg(windows)]
 fn adopt_system_proxy() {
@@ -1835,14 +1772,6 @@ fn main() {
             attach_console();
         }
         match cmd.as_str() {
-            "install-hooks" => {
-                report(hooks_install::install());
-                return;
-            }
-            "uninstall-hooks" => {
-                report(hooks_install::uninstall());
-                return;
-            }
             "autostart" => {
                 let r = match args.get(2).map(|s| s.as_str()) {
                     Some("on") => autostart::enable(),
@@ -1864,7 +1793,6 @@ fn main() {
     }
 
     let cfg = config::load();
-    let port = cfg.port;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1875,12 +1803,11 @@ fn main() {
             settings_window::open(app);
         }))
         .manage(AppState {
-            store: Mutex::new(Default::default()),
             cfg: Mutex::new(cfg),
-            usage: Mutex::new(usage::load_persisted()),
+            workbuddy: Mutex::new(workbuddy::load_persisted()),
             codex: Mutex::new(codex::load_persisted()),
             cursor: Mutex::new(cursor::load_persisted()),
-            grok: Mutex::new(grok::load_persisted()),
+            dsh: Mutex::new(dsh::load_persisted()),
             antigravity: Mutex::new(antigravity::load_persisted()),
             glm: Mutex::new(glm::load_persisted()),
             opencode: Mutex::new(opencode::load_persisted()),
@@ -1889,15 +1816,13 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
-            get_usage,
-            claude_sign_in,
-            get_claude_auth,
+            get_workbuddy,
             updater::get_update_state,
             updater::check_for_update,
             updater::install_update,
             get_codex,
             get_cursor,
-            get_grok,
+            get_dsh,
             get_antigravity,
             get_glm,
             get_opencode,
@@ -1911,8 +1836,6 @@ fn main() {
             report_dpr,
             notch_hidden,
             log_js,
-            focus_session,
-            dismiss_session,
             set_lang,
             get_scale,
             set_scale,
@@ -1935,8 +1858,6 @@ fn main() {
             get_lang_resolved,
             get_autostart,
             set_autostart,
-            get_hooks_installed,
-            set_hooks_installed,
             reset_notch_position,
             get_notch_edge,
             get_notch_insets,
@@ -1969,12 +1890,10 @@ fn main() {
             updater::check_on_launch(&handle);
             // Honours the saved switches: a notch hidden last time stays hidden.
             apply_visibility(&handle);
-            server::start(handle.clone(), port);
-            watcher::start(handle.clone());
-            usage::start(handle.clone());
+            workbuddy::start(handle.clone());
             codex::start(handle.clone());
             cursor::start(handle.clone());
-            grok::start(handle.clone());
+            dsh::start(handle.clone());
             antigravity::start(handle.clone());
             glm::start(handle.clone());
             opencode::start(handle.clone());
@@ -1986,31 +1905,7 @@ fn main() {
             backdrop::start(handle.clone());
             start_work_area_watch(handle.clone());
             topmost::start_watchdog(handle.clone());
-            // Seen-clears-it scan
-            let acker = handle.clone();
-            std::thread::spawn(move || {
-                activity::lower_thread_priority();
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(1500));
-                    if ack_scan(&acker) {
-                        broadcast(&acker);
-                    }
-                }
-            });
-            // Stale session cleanup
-            let sweeper = handle.clone();
-            std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                let changed = {
-                    let st = sweeper.state::<AppState>();
-                    let mut s = st.store.lock().unwrap();
-                    s.sweep()
-                };
-                if changed {
-                    broadcast(&sweeper);
-                }
-            });
-            // Persist the config (codenotch-hook reads the port from it)
+            // Persist the config
             {
                 let st = handle.state::<AppState>();
                 let c = st.cfg.lock().unwrap();
@@ -2030,7 +1925,7 @@ mod tests {
     };
     use crate::usage::LimitWindow;
 
-    /// A provider added without a page of its own used to fall through to Claude's
+    /// A provider added without a page of its own used to fall through to the first provider's
     #[test]
     fn every_provider_opens_its_own_page() {
         let mut hosts: Vec<&str> = TRAY_PROVIDER_IDS
@@ -2319,13 +2214,21 @@ mod tests {
     }
 
     #[test]
-    fn claude_means_the_session_even_when_the_week_is_fuller() {
-        assert_eq!(pick("claude", &[win("session", 0.10), win("weekly_all", 0.60)]), Some("session"));
+    fn workbuddy_means_its_credits_window_even_when_another_window_is_fuller() {
+        assert_eq!(pick("workbuddy", &[win("credits", 0.10), win("weekly_all", 0.60)]), Some("credits"));
     }
 
     #[test]
     fn a_missing_declared_window_is_a_dash_not_a_stand_in() {
-        assert_eq!(pick("claude", &[win("weekly_all", 0.60)]), None);
+        assert_eq!(pick("workbuddy", &[win("weekly_all", 0.60)]), None);
+    }
+
+    /// DeepSeek Harness publishes counts, so the day window leads and a count window never becomes
+    /// a percentage (ring_fraction drops it) — but it must still be the one the ring names.
+    #[test]
+    fn dsh_leads_with_its_day_window() {
+        assert_eq!(pick("dsh", &[win("today", 0.0), win("week", 0.0), win("month", 0.0)]), Some("today"));
+        assert_eq!(pick("dsh", &[win("month", 0.0)]), Some("month"), "a single window still leads");
     }
 
     #[test]
