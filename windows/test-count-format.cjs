@@ -24,9 +24,9 @@ function markedSource(document, name) {
   assert.ok(stop > start, `${name} markers are ordered`);
   return document.slice(start, stop);
 }
-const context = vm.createContext({});
+const context = vm.createContext({ textCopy: (s) => s }); // the page's wording lookup, as the identity
 vm.runInContext(markedSource(html, 'COUNT FORMAT'), context);
-const { compactCount, thousands } = context;
+const { compactCount, thousands, countCopy } = context;
 const pill = (n) => '~' + compactCount(n);
 
 test('Counts below a thousand are printed whole', () => {
@@ -66,6 +66,23 @@ test('The card spells the count out in full, grouped', () => {
   assert.equal(thousands(1583864), '1,583,864');
   assert.equal(thousands(999), '999');
   assert.equal(thousands(0), '0');
+});
+
+test('A count row names what it counts, never the span its label already states', () => {
+  assert.equal(countCopy({ count: 1583864, unit: 'tokens' }), '~1,583,864 tokens');
+  assert.equal(countCopy({ count: 12, unit: 'requests' }), '~12 requests');
+  assert.equal(countCopy({ count: 1, unit: 'requests' }), '~1 request');
+  assert.equal(countCopy({ count: 1, unit: 'tokens' }), '~1 token');
+  assert.equal(countCopy({ count: 0, unit: 'tokens' }), 'no tokens');
+  assert.equal(countCopy({ count: 0, unit: 'requests' }), 'no requests');
+  // The defect this replaced: every row ended in "today", so a 7- or 30-day total read "tokens today"
+  // even though its own label said otherwise. The label states the span; the row must not.
+  for (const n of [0, 1, 12, 1583864]) {
+    for (const unit of ['tokens', 'requests']) {
+      const row = countCopy({ count: n, unit });
+      assert.ok(!/today/.test(row), `a count row restated its span: ${row}`);
+    }
+  }
 });
 
 test('The tidied reading still fits the pill it is printed in', () => {

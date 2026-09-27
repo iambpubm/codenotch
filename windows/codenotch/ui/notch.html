@@ -359,6 +359,14 @@ function compactCount(n){
 }
 // The card has room for the whole figure, and a grouped one is legible where seven bare digits are not
 function thousands(n){ return Math.round(n).toLocaleString('en-US'); }
+// What a count row says under its label: the quantity, and what is being counted. The span is the
+// label's to state, so this never repeats it — it used to end every row in "today", which turned a
+// seven-day total into "tokens today" as soon as a window wider than a day existed.
+function countCopy(w){
+  const unit=w.unit==='tokens'?'token':'request';
+  const many=w.count===1?unit:unit+'s';
+  return w.count>0?`~${thousands(w.count)} ${textCopy(many)}`:textCopy('no '+many);
+}
 // END TESTABLE COUNT FORMAT SELECTOR
 // Both ends, since vendors disagree on which they print; the left half comes from the rounded used half, as their dashboards do
 function usedCopy(w){
@@ -447,20 +455,20 @@ const TEXT={
     'Streaming (network)':'스트리밍 중 (네트워크)',
     'Rate limited, retrying in':'요청 제한, 재시도까지',
     'Rate limited — retrying in':'요청 제한 — 재시도까지',
-    'request today':'오늘 요청',
-    'requests today':'오늘 요청',
+    'request':'요청',
+    'requests':'요청',
     'Credits':'크레딧',
     'Today':'오늘',
     'Last 7 days':'최근 7일',
     'Last 30 days':'최근 30일',
-    'token today':'토큰 (오늘)',
-    'tokens today':'토큰 (오늘)',
-    'no tokens today':'오늘 토큰 없음',
+    'token':'토큰',
+    'tokens':'토큰',
+    'no tokens':'토큰 없음',
     'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy가 자격 증명을 봉인했습니다 — 로컬 토큰 사용량 표시',
     'No balance available — showing local token usage':'잔액을 사용할 수 없음 — 로컬 토큰 사용량 표시',
     'Sign in to WorkBuddy to see usage.':'사용량을 확인하려면 WorkBuddy에 로그인하십시오.',
     'DeepSeek Harness has not run here yet.':'DeepSeek Harness가 이 컴퓨터에서 아직 실행되지 않았습니다.',
-    'no requests today':'오늘 요청 없음',
+    'no requests':'요청 없음',
     'Waiting for first reading…':'첫 측정값을 기다리는 중…',
     'Sign in to Cursor to see usage.':'사용량을 확인하려면 Cursor에 로그인하십시오.',
     'Sign in to Codex to see usage.':'사용량을 확인하려면 Codex에 로그인하십시오.',
@@ -508,20 +516,20 @@ const TEXT={
     'Streaming (network)':'Transmitindo (rede)',
     'Rate limited, retrying in':'Limite de requisições, nova tentativa em',
     'Rate limited — retrying in':'Limite de requisições — nova tentativa em',
-    'request today':'requisição hoje',
-    'requests today':'requisições hoje',
+    'request':'requisição',
+    'requests':'requisições',
     'Credits':'Créditos',
     'Today':'Hoje',
     'Last 7 days':'Últimos 7 dias',
     'Last 30 days':'Últimos 30 dias',
-    'token today':'token hoje',
-    'tokens today':'tokens hoje',
-    'no tokens today':'nenhum token hoje',
+    'token':'token',
+    'tokens':'tokens',
+    'no tokens':'nenhum token',
     'Balance sealed by WorkBuddy — showing local token usage':'Credencial selada pelo WorkBuddy — mostrando uso local de tokens',
     'No balance available — showing local token usage':'Saldo indisponível — mostrando uso local de tokens',
     'Sign in to WorkBuddy to see usage.':'Entre no WorkBuddy para ver o uso.',
     'DeepSeek Harness has not run here yet.':'O DeepSeek Harness ainda não foi executado aqui.',
-    'no requests today':'nenhuma solicitação hoje',
+    'no requests':'nenhuma solicitação',
     'Waiting for first reading…':'Aguardando a primeira leitura…',
     'Sign in to Cursor to see usage.':'Entre no Cursor para ver o uso.',
     'Sign in to Codex to see usage.':'Entre no Codex para ver o uso.',
@@ -558,20 +566,20 @@ const TEXT={
     'Streaming (network)':'Потокова передача (мережа)',
     'Rate limited, retrying in':'Ліміт запитів, повтор через',
     'Rate limited — retrying in':'Ліміт запитів — повтор через',
-    'request today':'запит сьогодні',
-    'requests today':'запитів сьогодні',
+    'request':'запит',
+    'requests':'запитів',
     'Credits':'Кредити',
     'Today':'Сьогодні',
     'Last 7 days':'Останні 7 днів',
     'Last 30 days':'Останні 30 днів',
-    'token today':'токен сьогодні',
-    'tokens today':'токенів сьогодні',
-    'no tokens today':'сьогодні токенів немає',
+    'token':'токен',
+    'tokens':'токенів',
+    'no tokens':'токенів немає',
     'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy запечатав облікові дані — показано локальне використання токенів',
     'No balance available — showing local token usage':'Баланс недоступний — показано локальне використання токенів',
     'Sign in to WorkBuddy to see usage.':'Увійдіть у WorkBuddy, щоб бачити використання.',
     'DeepSeek Harness has not run here yet.':'DeepSeek Harness ще не запускався на цьому комп’ютері.',
-    'no requests today':'сьогодні запитів немає',
+    'no requests':'запитів немає',
     'Waiting for first reading…':'Очікування першого показника…',
     'Sign in to Cursor to see usage.':'Увійдіть у Cursor, щоб бачити використання.',
     'Sign in to Codex to see usage.':'Увійдіть у Codex, щоб бачити використання.',
@@ -609,20 +617,20 @@ const TEXT={
     'Streaming (network)':'Потоковая передача (сеть)',
     'Rate limited, retrying in':'Превышен лимит, повтор через',
     'Rate limited — retrying in':'Превышен лимит — повтор через',
-    'request today':'запрос сегодня',
-    'requests today':'запросов сегодня',
+    'request':'запрос',
+    'requests':'запросов',
     'Credits':'Кредиты',
     'Today':'Сегодня',
     'Last 7 days':'Последние 7 дней',
     'Last 30 days':'Последние 30 дней',
-    'token today':'токен сегодня',
-    'tokens today':'токенов сегодня',
-    'no tokens today':'сегодня токенов нет',
+    'token':'токен',
+    'tokens':'токенов',
+    'no tokens':'токенов нет',
     'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy запечатал учётные данные — показано локальное использование токенов',
     'No balance available — showing local token usage':'Баланс недоступен — показано локальное использование токенов',
     'Sign in to WorkBuddy to see usage.':'Войдите в WorkBuddy, чтобы увидеть использование.',
     'DeepSeek Harness has not run here yet.':'DeepSeek Harness ещё не запускался на этом компьютере.',
-    'no requests today':'сегодня запросов нет',
+    'no requests':'запросов нет',
     'Waiting for first reading…':'Ожидание первого показания…',
     'Sign in to Cursor to see usage.':'Войдите в Cursor, чтобы увидеть использование.',
     'Sign in to Codex to see usage.':'Войдите в Codex, чтобы увидеть использование.',
@@ -657,20 +665,20 @@ const TEXT={
     'Streaming (network)':'正在传输（网络）',
     'Rate limited, retrying in':'已限流，稍后重试',
     'Rate limited — retrying in':'已限流 — 稍后重试',
-    'request today':'次请求（今日）',
-    'requests today':'次请求（今日）',
+    'request':'次请求',
+    'requests':'次请求',
     'Credits':'额度',
     'Today':'今天',
     'Last 7 days':'近 7 天',
     'Last 30 days':'近 30 天',
-    'token today':'Token（今日）',
-    'tokens today':'Tokens（今日）',
-    'no tokens today':'今日无 token 消耗',
+    'token':'Token',
+    'tokens':'Tokens',
+    'no tokens':'无 token 消耗',
     'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy 已密封凭据 — 显示本地 token 用量',
     'No balance available — showing local token usage':'无可用额度 — 显示本地 token 用量',
     'Sign in to WorkBuddy to see usage.':'请登录 WorkBuddy 以查看用量。',
     'DeepSeek Harness has not run here yet.':'本机还没有运行过 DeepSeek Harness。',
-    'no requests today':'今日没有请求',
+    'no requests':'没有请求',
     'Waiting for first reading…':'正在等待第一次读数…',
     'Sign in to Cursor to see usage.':'请登录 Cursor 以查看用量。',
     'Sign in to Codex to see usage.':'请登录 Codex 以查看用量。',
@@ -705,20 +713,20 @@ const TEXT={
     'Streaming (network)':'正在傳輸（網路）',
     'Rate limited, retrying in':'已限流，稍後重試',
     'Rate limited — retrying in':'已限流 — 稍後重試',
-    'request today':'次要求（今日）',
-    'requests today':'次要求（今日）',
+    'request':'次要求',
+    'requests':'次要求',
     'Credits':'額度',
     'Today':'今天',
     'Last 7 days':'近 7 天',
     'Last 30 days':'近 30 天',
-    'token today':'Token（今日）',
-    'tokens today':'Tokens（今日）',
-    'no tokens today':'今日無 token 消耗',
+    'token':'Token',
+    'tokens':'Tokens',
+    'no tokens':'無 token 消耗',
     'Balance sealed by WorkBuddy — showing local token usage':'WorkBuddy 已密封憑證 — 顯示本機 token 用量',
     'No balance available — showing local token usage':'無可用額度 — 顯示本機 token 用量',
     'Sign in to WorkBuddy to see usage.':'請登入 WorkBuddy 以查看用量。',
     'DeepSeek Harness has not run here yet.':'本機還沒有執行過 DeepSeek Harness。',
-    'no requests today':'今日沒有要求',
+    'no requests':'沒有要求',
     'Waiting for first reading…':'正在等待第一次讀數…',
     'Sign in to Cursor to see usage.':'請登入 Cursor 以查看用量。',
     'Sign in to Codex to see usage.':'請登入 Codex 以查看用量。',
@@ -1232,12 +1240,11 @@ function renderCard(){
         if(group) html+=`<div class="g-head">${esc(textCopy(group))}</div><div class="g-box">`;
       }
       if(w.count!=null){
-        // A count window has no denominator. `unit` says what is being counted — Antigravity counts
-        // requests, DeepSeek Harness counts tokens — and only the wording changes. Grouped digits keep
-        // a seven-figure token total readable; `compactCount` below is for the pill, where width is fixed.
-        const unit=w.unit==='tokens'?'token':'request';
+        // A count window has no denominator: `unit` says what is being counted — Antigravity counts
+        // requests, WorkBuddy and DeepSeek Harness count tokens. The span belongs to the label above
+        // ("Today", "Last 7 days"), so the row names only the quantity.
         html+=`<div class="win"><div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span></div>
-          <div class="w-used">${w.count>0?`~${thousands(w.count)} ${textCopy(w.count===1?unit+' today':unit+'s today')}`:textCopy('no '+unit+'s today')}</div></div>`;
+          <div class="w-used">${countCopy(w)}</div></div>`;
         continue;
       }
       html+=`<div class="win">

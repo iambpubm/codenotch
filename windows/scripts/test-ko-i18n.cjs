@@ -16,7 +16,8 @@ test('Korean card keeps numbers, plan names and unknown vendor messages', () => 
   assert.equal(textCopy('Current session'), '현재 세션');
   assert.equal(textCopy('Sign in to WorkBuddy to see usage.'), '사용량을 확인하려면 WorkBuddy에 로그인하십시오.');
   assert.equal(textCopy('Credits'), '크레딧');
-  assert.equal(textCopy('tokens today'), '토큰 (오늘)');
+  assert.equal(textCopy('tokens'), '토큰');
+  assert.equal(textCopy('no tokens'), '토큰 없음');
   assert.equal(textCopy('Balance sealed by WorkBuddy — showing local token usage'),
     'WorkBuddy가 자격 증명을 봉인했습니다 — 로컬 토큰 사용량 표시');
   assert.equal(textCopy('No balance available — showing local token usage'),
