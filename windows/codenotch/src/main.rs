@@ -60,7 +60,8 @@ pub struct AppState {
     pub opencode: Mutex<usage::UsageSnapshot>,
     /// Provider glyph cache, collected at launch and again on a tray refresh
     pub glyphs: Mutex<std::collections::HashMap<String, glyphs::Glyph>>,
-    /// Working state of the providers that report it (Cursor reports it; Codex and Antigravity are inferred from recent writes)
+    /// Working state of the providers whose state can be established: Cursor and the DeepSeek
+    /// Harness report it, Codex, WorkBuddy and Antigravity are inferred from recent writes
     pub activity: Mutex<Vec<activity::Activity>>,
 }
 

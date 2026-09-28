@@ -136,6 +136,175 @@ fn discover(roots: &[PathBuf]) -> Vec<PathBuf> {
     files
 }
 
+// ---------------- what the tail of a transcript is doing ----------------
+
+/// The last meaningful entry of a transcript: which part of a turn the session stopped in.
+///
+/// This reads the same way `activity.rs` reads a Codex rollout, because the two files are the same
+/// idea written by two different clients — a model decides, calls a tool, reads the result, decides
+/// again, and finally answers. The types differ in spelling and agree in meaning, which is why the
+/// thresholds in `activity.rs` are shared between them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Step {
+    /// `function_call` — a tool is running. WorkBuddy asks for permission in its own window rather
+    /// than in the transcript, so a call that is only waiting on you looks exactly like one that is
+    /// executing, and this cannot be split into "waiting" the way the harness's log can.
+    Tool,
+    /// `function_call_result` or `reasoning` — the model is deciding the next step.
+    Thinking,
+    /// A `message` from the user — the turn has just been asked for.
+    Asked,
+    /// A `message` from the assistant — the turn's answer. `status` distinguishes `completed` from
+    /// an answer cut short by a rate limit or by you (`incomplete`), but both end the turn, so both
+    /// land here: only leaving the turn counts.
+    Answered,
+}
+
+/// What a transcript's two ends say: what it is doing now, and what to call it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct State {
+    /// The last entry that says anything about state, with its timestamp in ms.
+    pub step: Option<(Step, u64)>,
+    /// The title the session gave itself, empty when it never wrote one.
+    pub title: String,
+    /// The directory the session runs in, from whichever entry states it.
+    pub cwd: String,
+}
+
+/// How much of each end of a transcript is read. One line is one JSON object and the largest of them
+/// are tool results of a few kilobytes, so this is thousands of lines — far more than the walk back
+/// to the last meaningful entry needs.
+const HEAD_BYTES: u64 = 64 * 1024;
+const TAIL_BYTES: u64 = 256 * 1024;
+
+/// The last entry in a block of transcript lines that says what is happening.
+///
+/// Bookkeeping entries are **skipped, not treated as states**: `session-meta`, `ai-title`,
+/// `file-history-snapshot` and `resend-fork-notice` are written around a turn rather than during
+/// one, so reading them as the current state would freeze the notch on whatever happened before
+/// them and hide a turn that started afterwards.
+fn step_in(text: &str) -> Option<(Step, u64)> {
+    for line in text.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+        let step = match record.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "function_call" => Step::Tool,
+            "function_call_result" | "reasoning" => Step::Thinking,
+            "message" => match record.get("role").and_then(|r| r.as_str()).unwrap_or("") {
+                "user" => Step::Asked,
+                "assistant" => Step::Answered,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let at = record.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
+        return Some((step, at));
+    }
+    None
+}
+
+/// The title and the directory, from a block of the transcript's opening lines. Later wins, so a
+/// session that retitled itself leaves the newest name in place.
+fn head_of(text: &str, state: &mut State) {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+        let title = record.get("aiTitle").and_then(|t| t.as_str()).unwrap_or("");
+        if !title.is_empty() {
+            state.title = title.to_string();
+        }
+        let cwd = record.get("cwd").and_then(|t| t.as_str()).unwrap_or("");
+        if !cwd.is_empty() {
+            state.cwd = cwd.to_string();
+        }
+    }
+}
+
+/// The first `max` bytes of a file, as text. A cut in the middle of a multi-byte character is
+/// repaired by the lossy decode; a cut in the middle of a line is handled by the caller, which
+/// ignores any line that will not parse.
+fn read_head(path: &Path, max: u64) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf: Vec<u8> = Vec::new();
+    file.take(max).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// The last `max` bytes of a file, as text, with the leading partial line dropped.
+///
+/// A tail read starts in the middle of whatever line was there, so the fragment is thrown away
+/// rather than handed to the parser as a half-object. The last line is often a half-written one too
+/// — the app is appending as this runs — and `step_in` already skips unparseable lines, so only the
+/// front needs the treatment.
+fn read_tail(path: &Path, max: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let from = len.saturating_sub(max);
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut buf: Vec<u8> = Vec::new();
+    file.take(max).read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if from == 0 {
+        return Some(text);
+    }
+    // `from > 0` means the first character is not a line start, so everything up to the first
+    // newline belongs to a line that began before the window.
+    Some(match text.find('\n') {
+        Some(cut) => text[cut + 1..].to_string(),
+        None => String::new(),
+    })
+}
+
+/// Read a transcript's own account of what it is doing, from its two ends.
+///
+/// The whole file is deliberately not read: these transcripts reach tens of megabytes, the probe
+/// runs every two seconds, and neither end of a session's state lives in the middle.
+pub fn read_state(path: &Path) -> Option<State> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let mut state = State::default();
+    if let Some(tail) = read_tail(path, TAIL_BYTES) {
+        state.step = step_in(&tail);
+    }
+    if let Some(head) = read_head(path, HEAD_BYTES) {
+        head_of(&head, &mut state);
+    }
+    Some(state)
+}
+
+/// Transcripts written to within `within_ms`, newest first, with their mtimes.
+///
+/// The mtime filter is what keeps this off the whole history: a machine used for months holds
+/// thousands of finished sessions, and only the ones being written to right now can be working.
+/// `discover` walks directories rather than opening files, so the refusals here cost one `metadata`
+/// each and nothing is parsed until a file has passed.
+pub fn recent_transcripts(within_ms: u64) -> Vec<(PathBuf, u64)> {
+    let now = now_ms();
+    let mut out: Vec<(PathBuf, u64)> = Vec::new();
+    for path in discover(&roots()) {
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+            continue;
+        }
+        let mtime = mtime_ms_of(&meta);
+        if now.saturating_sub(mtime) <= within_ms {
+            out.push((path, mtime));
+        }
+    }
+    out.sort_by_key(|(_, mtime)| std::cmp::Reverse(*mtime));
+    out
+}
+
 // ---------------- folding one transcript ----------------
 
 /// Local calendar day of an instant, as days since the Common Era — an integer that compares and
@@ -433,5 +602,118 @@ mod tests {
         assert_eq!(days.get(&local_day(at)), Some(&60));
         assert_eq!(days.len(), 1, "one session's calls land on one day here");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- activity: which part of a turn the session stopped in ----
+
+    fn state_at(name: &str, lines: &[&str]) -> State {
+        let dir = std::env::temp_dir().join(format!("codenotch-wb-state-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(name);
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        read_state(&path).unwrap()
+    }
+
+    /// A real turn, in the order the app writes it: the reasoning before a tool call, the result
+    /// after it, and the answer at the end.
+    #[test]
+    fn the_last_entry_decides_which_part_of_the_turn_is_running() {
+        let running = state_at(
+            "wb-steps.jsonl",
+            &[
+                r#"{"type":"session-meta","timestamp":100}"#,
+                r#"{"type":"message","role":"user","timestamp":200}"#,
+                r#"{"type":"reasoning","timestamp":300}"#,
+                r#"{"type":"function_call","timestamp":400}"#,
+            ],
+        );
+        assert_eq!(running.step, Some((Step::Tool, 400)));
+
+        let thinking = state_at(
+            "wb-thinking.jsonl",
+            &[
+                r#"{"type":"function_call","timestamp":400}"#,
+                r#"{"type":"function_call_result","timestamp":500}"#,
+            ],
+        );
+        assert_eq!(thinking.step, Some((Step::Thinking, 500)));
+    }
+
+    /// The bookkeeping entries are written *around* a turn, so one landing after a step must not be
+    /// mistaken for the state — that would freeze the reading on whatever came before it.
+    #[test]
+    fn bookkeeping_lines_written_after_a_step_do_not_replace_it() {
+        let state = state_at(
+            "wb-bookkeeping.jsonl",
+            &[
+                r#"{"type":"function_call","timestamp":400}"#,
+                r#"{"type":"ai-title","timestamp":500,"aiTitle":"Naming it"}"#,
+                r#"{"type":"file-history-snapshot","timestamp":600}"#,
+                r#"{"type":"session-meta","timestamp":700}"#,
+            ],
+        );
+        assert_eq!(state.step, Some((Step::Tool, 400)), "bookkeeping is not a state");
+        assert_eq!(state.title, "Naming it", "but it is where the title comes from");
+    }
+
+    #[test]
+    fn every_kind_of_step_is_recognised() {
+        let case = |line: &str| state_at("wb-one.jsonl", &[line]).step;
+        assert_eq!(case(r#"{"type":"function_call","timestamp":10}"#), Some((Step::Tool, 10)));
+        assert_eq!(case(r#"{"type":"function_call_result","timestamp":11}"#), Some((Step::Thinking, 11)));
+        assert_eq!(case(r#"{"type":"reasoning","timestamp":12}"#), Some((Step::Thinking, 12)));
+        assert_eq!(case(r#"{"type":"message","role":"user","timestamp":13}"#), Some((Step::Asked, 13)));
+        assert_eq!(
+            case(r#"{"type":"message","role":"assistant","status":"completed","timestamp":14}"#),
+            Some((Step::Answered, 14))
+        );
+        // A rate limit or an interrupt ends the turn just as surely as an answer does, and the app
+        // says so with `incomplete` — the same place, the same meaning for the notch.
+        assert_eq!(
+            case(r#"{"type":"message","role":"assistant","status":"incomplete","timestamp":15}"#),
+            Some((Step::Answered, 15))
+        );
+        assert_eq!(case(r#"{"type":"ai-title","timestamp":16,"aiTitle":"t"}"#), None);
+    }
+
+    /// A transcript with nothing recognisable in it has no state, which is not the same as having a
+    /// state of "idle" — the caller has to be able to tell the two apart.
+    #[test]
+    fn a_transcript_with_nothing_recognisable_has_no_state() {
+        assert_eq!(state_at("wb-none.jsonl", &[r#"{"type":"session-meta","timestamp":1}"#]).step, None);
+        assert_eq!(state_at("wb-junk.jsonl", &["not json at all"]).step, None);
+    }
+
+    #[test]
+    fn the_title_and_the_directory_come_from_the_opening_lines() {
+        let state = state_at(
+            "wb-head.jsonl",
+            &[
+                r#"{"type":"message","role":"user","timestamp":100,"cwd":"d:\\WorkBuddyWorkSpace\\thing"}"#,
+                r#"{"type":"ai-title","timestamp":200,"aiTitle":"让项目1支持WorkBuddy"}"#,
+                r#"{"type":"ai-title","timestamp":300,"aiTitle":"Renamed later"}"#,
+            ],
+        );
+        assert_eq!(state.title, "Renamed later", "the newest title wins");
+        assert_eq!(state.cwd, "d:\\WorkBuddyWorkSpace\\thing");
+    }
+
+    /// A tail read starts in the middle of a line, and that fragment must never reach the parser.
+    #[test]
+    fn a_tail_read_drops_the_half_line_it_starts_in_the_middle_of() {
+        let dir = std::env::temp_dir().join(format!("codenotch-wb-state-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("wb-tailcut.jsonl");
+        let filler = format!(r#"{{"type":"message","role":"user","content":"{}"}}"#, "x".repeat(4096));
+        let body = [
+            filler.as_str(),
+            r#"{"type":"reasoning","timestamp":100}"#,
+            r#"{"type":"function_call","timestamp":200}"#,
+        ]
+        .join("\n");
+        std::fs::write(&path, body).unwrap();
+        let tail = read_tail(&path, 200).unwrap();
+        assert!(!tail.contains("xxx"), "the fragment the read landed in must not be parsed");
+        assert_eq!(step_in(&tail), Some((Step::Tool, 200)));
     }
 }

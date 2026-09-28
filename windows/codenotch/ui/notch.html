@@ -1151,8 +1151,10 @@ function setUiLanguage(lang){
   if(card&&card.classList.contains('show')) renderCard();
 }
 // "Is it working?" per provider, from the activity probe. Returns running | attention | idle.
-// A provider the probe cannot see (WorkBuddy, DeepSeek Harness, z.ai, OpenCode) simply stays idle,
-// and its cell draws no activity arc.
+// WorkBuddy and the DeepSeek Harness are both covered: the first is read from the tail of its
+// transcripts the way Codex is, the second from the `turn/end` the harness writes from a finally,
+// which also makes "waiting on your approval" a fact rather than an inference. z.ai and OpenCode
+// are still unseen, so their cells stay idle and draw no activity arc.
 function workState(id){
   const acts=activity.filter(a=>a.provider===id);
   if(acts.some(a=>a.state==='waiting')) return 'attention';
@@ -1293,7 +1295,8 @@ function renderRing(){
       }
     }
     svg.innerHTML=inner;
-    { // thin inner arc: spinning white = working, yellow pulse = waiting on you (one animation for all four, different sources)
+    { // thin inner arc: spinning white = working, yellow pulse = waiting on you (one animation for
+      // every provider, whatever the source of the state behind it)
       // Its own layer, so a stale reading can dim around it without dimming it: see `.ringwrap.stale`
       const ws=workState(p.base);
       if(ws==='running') activity.innerHTML=`<g class="arc-spin">${svgArc(19,0.28,INK,2.5)}</g>`;
@@ -1416,8 +1419,9 @@ function renderCard(){
     }
     if(snap.note) html+=`<div class="c-note">${esc(textCopy(snap.note))}</div>`;
   }
-  // Detected activity rows (Cursor reports state; Codex and Antigravity are inferred from recent
-  // writes). Waiting before busy, newest first within each, so what gets cut is what matters least.
+  // Detected activity rows (Cursor and the harness report state; Codex, WorkBuddy and Antigravity
+  // are inferred from recent writes). Waiting before busy, newest first within each, so what gets
+  // cut is what matters least.
   const acts=activity.filter(a=>a.provider===p.base).sort((a,b)=>(b.state==='waiting')-(a.state==='waiting')||b.since-a.since);
   if(acts.length){
     html+=`<div class="c-sessions">`;

@@ -38,9 +38,14 @@ Providers that are not installed simply do not get a cell. A config saved with t
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
 
 The working-state arc (the thin spinning line inside a ring, and the amber pulse when
-something wants your input) is drawn for whichever provider the activity probe can see:
-Cursor reports its state, Codex and Antigravity are inferred from recent writes. The rest
-have no state to read and simply show no arc.
+something wants your input) is drawn for every provider whose state can be established from
+what it leaves on disk. Cursor and the DeepSeek Harness *state* their state — Cursor in its
+composer rows, the harness through the `turn/start` / `turn/end` pair it writes around every
+turn — so those two are read rather than inferred, and the harness is the only one that can
+say "waiting on your approval" with certainty. Codex, WorkBuddy and Antigravity are inferred
+from their transcripts: the last entry says which part of a turn they stopped in, and how long
+the file has been quiet says whether they are still there. z.ai and OpenCode have no state to
+read and simply show no arc.
 
 ### Codex quota recovery
 

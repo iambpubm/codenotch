@@ -406,6 +406,169 @@ fn read_transcript(path: &Path) -> Option<String> {
     Some(decode_transcript(&bytes, compressed))
 }
 
+// ---------------- whether a turn is still open ----------------
+
+/// The four log entries that decide whether a session is still working.
+///
+/// Everything else the harness writes is either inside a turn (`step/start`, `tool/call`,
+/// `assistant/message`, `tool/result`, …) or bookkeeping (`session/title`, `request/header`,
+/// `permission/preset`, …), so the *last* of these four is the whole answer: whichever one comes
+/// last is the state. There is no voting and no window.
+///
+/// `turn/end` is why this is state rather than a guess. The harness writes it in a `finally` in the
+/// turn loop of `dsh-agent-loop`, so it lands whatever ended the turn — a conclusion (`completed`),
+/// a rejected pre-step (`blocked`), a token ceiling, an abort (`aborted`), an error (`error`). A
+/// turn cannot be over without the log saying so, which is what lets this reader do without the
+/// silence thresholds the Codex one needs. The only way to get a stale `turn/start` is for the
+/// process to die before its `finally` runs, and `activity.rs` covers that with an age check.
+///
+/// `approval/asked` / `approval/decided` are written as a pair, one `asked` and the `decided` that
+/// always follows it, so an `asked` with no `decided` after it is a question still on screen. That
+/// is the same fact the notch draws in amber.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edge {
+    /// `turn/start` — a turn began and has not ended.
+    TurnOpen,
+    /// `turn/end` — the last turn is over.
+    TurnClosed,
+    /// `approval/asked` — a tool is waiting for your permission.
+    ApprovalAsked,
+    /// `approval/decided` — you answered, and the turn carries on.
+    ApprovalSettled,
+}
+
+fn edge_of(kind: &str) -> Option<Edge> {
+    match kind {
+        "turn/start" => Some(Edge::TurnOpen),
+        "turn/end" => Some(Edge::TurnClosed),
+        "approval/asked" => Some(Edge::ApprovalAsked),
+        "approval/decided" => Some(Edge::ApprovalSettled),
+        _ => None,
+    }
+}
+
+/// The last edge written in one block of decoded lines, with its time. The walk is backwards
+/// because only the last one matters, and stopping at the first hit is what keeps it cheap.
+fn edge_in(text: &str) -> Option<(Edge, u64)> {
+    for line in text.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+        let Some(edge) = record.get("type").and_then(|t| t.as_str()).and_then(edge_of) else { continue };
+        let at = record.get("time").and_then(|t| t.as_i64()).unwrap_or(0).max(0) as u64;
+        return Some((edge, at));
+    }
+    None
+}
+
+/// What a session log says about itself: whether it is mid-turn, and what to call it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct State {
+    /// The last edge the log wrote. `None` for a log that has not started a turn yet.
+    pub edge: Option<Edge>,
+    /// When that edge was written, in ms since the epoch. Zero when there is none.
+    pub at: u64,
+    /// The title the session gave itself, empty when it never wrote one.
+    pub title: String,
+    /// The directory the session runs in, from the log's own header.
+    pub cwd: String,
+}
+
+impl State {
+    /// A turn is open — the log's last word on the subject was `turn/start`, or an approval that was
+    /// answered and left the turn running.
+    pub fn working(&self) -> bool {
+        matches!(self.edge, Some(Edge::TurnOpen) | Some(Edge::ApprovalSettled))
+    }
+
+    /// A tool asked for permission and nothing has answered it yet.
+    pub fn waiting(&self) -> bool {
+        matches!(self.edge, Some(Edge::ApprovalAsked))
+    }
+}
+
+/// How far back the walk will go before giving up. A long-running turn writes a frame per flush, so
+/// hundreds of them can sit between its `turn/start` and the end of the file; the bound exists so a
+/// pathological log cannot be decompressed end to end on every tick. Hitting it means "no edge
+/// found", which `working()` reads as idle — the opposite of generous, and deliberately so: an
+/// unreadable log is not evidence that an agent is running.
+const EDGE_SCAN_FRAMES: usize = 400;
+
+/// How far into the log the title and the working directory are looked for. The harness writes both
+/// in the opening frames, well before the first turn begins.
+const HEAD_SCAN_FRAMES: usize = 16;
+
+/// Pick the header and the title out of a block of decoded lines. Later wins, so a re-stated title
+/// leaves the newest one in place.
+fn head_of(text: &str, state: &mut State) {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+        match record.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "session" => {
+                let cwd = str_of(record.get("cwd"));
+                if !cwd.is_empty() {
+                    state.cwd = cwd;
+                }
+            }
+            "session/title" => {
+                let title = str_of(record.pointer("/data/title"));
+                if !title.is_empty() {
+                    state.title = title;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Read a session log's own account of whether it is still working.
+///
+/// One file read serves both ends: the tail is walked backwards for the last edge, the head forwards
+/// for the title and the directory. Reading the whole file is what makes the tail walk possible at
+/// all — Zstandard frames can only be located by walking from a frame boundary, so there is no way
+/// to seek to the end and start there.
+pub fn read_state(path: &Path) -> Option<State> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_TRANSCRIPT_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let mut state = State::default();
+    if !path.to_string_lossy().ends_with(".jsonl.zstd") {
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some((edge, at)) = edge_in(&text) {
+            state.edge = Some(edge);
+            state.at = at;
+        }
+        head_of(&text, &mut state);
+        return Some(state);
+    }
+    let frames = scan_zstd_frames(&bytes);
+    for (start, end) in frames.iter().rev().take(EDGE_SCAN_FRAMES) {
+        if let Some((edge, at)) = edge_in(&decode_frame_lossy(&bytes[*start..*end])) {
+            state.edge = Some(edge);
+            state.at = at;
+            break;
+        }
+    }
+    for (start, end) in frames.iter().take(HEAD_SCAN_FRAMES) {
+        head_of(&decode_frame_lossy(&bytes[*start..*end]), &mut state);
+    }
+    Some(state)
+}
+
+/// Every session's live transcript, for the activity probe. The same discovery the token walk uses,
+/// exposed because "is anything running" starts from exactly the same set of files.
+pub fn session_logs() -> Vec<PathBuf> {
+    sessions_root().map(|root| preferred_transcripts(&root)).unwrap_or_default()
+}
+
 // ---------------- parsing one transcript ----------------
 
 /// Local calendar day of an instant, as days since the Common Era — an integer that compares and
@@ -1542,5 +1705,144 @@ mod tests {
         assert_eq!(estimate.parts[0].tokens, 1_000_000);
         assert!((estimate.parts[0].cost - 0.02).abs() < 1e-9);
         assert!(estimate.unpriced.is_empty());
+    }
+
+    // ---- activity: the last turn edge is the state ----
+
+    /// One real Zstandard frame per line, the way the harness writes them. Compressing for real
+    /// rather than stubbing the decoder out is the point: the frame walk in `read_state` is half of
+    /// what is being tested, and a fixture that handed back plain text would skip it.
+    fn framed(rows: &[serde_json::Value]) -> Vec<u8> {
+        let mut out: Vec<u8> = Vec::new();
+        for row in rows {
+            out.extend(zstd::encode_all(line(row.clone()).as_bytes(), 3).unwrap());
+        }
+        out
+    }
+
+    fn log_at(name: &str, rows: &[serde_json::Value]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("codenotch-dsh-state-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(name);
+        std::fs::write(&path, framed(rows)).unwrap();
+        path
+    }
+
+    /// A harness log's opening, which is where the title and the working directory are written.
+    fn opening(cwd: &str, title: &str) -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"type": "session", "seq": 0, "time": 1_700_000_000_000u64, "cwd": cwd}),
+            serde_json::json!({"type": "session/title", "seq": 1, "time": 1_700_000_001_000u64, "data": {"title": title}}),
+        ]
+    }
+
+    fn turn_start(turn: i64, at: u64) -> serde_json::Value {
+        serde_json::json!({"type": "turn/start", "seq": 10, "time": at, "data": {"turn": turn}})
+    }
+
+    fn turn_end(turn: i64, at: u64) -> serde_json::Value {
+        serde_json::json!({"type": "turn/end", "seq": 20, "time": at, "data": {"turn": turn, "reason": {"kind": "completed"}}})
+    }
+
+    #[test]
+    fn a_log_that_ends_on_turn_end_is_not_working() {
+        let mut rows = opening("D:\\work", "A finished session");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        rows.push(serde_json::json!({"type": "tool/call", "seq": 11, "time": 1_700_000_011_000u64, "data": {"turn": 1, "step": 1, "name": "pwsh"}}));
+        rows.push(serde_json::json!({"type": "tool/result", "seq": 12, "time": 1_700_000_012_000u64, "data": {"turn": 1, "step": 1}}));
+        rows.push(turn_end(1, 1_700_000_020_000));
+        let state = read_state(&log_at("finished.v3.jsonl.zstd", &rows)).unwrap();
+        assert_eq!(state.edge, Some(Edge::TurnClosed));
+        assert_eq!(state.at, 1_700_000_020_000);
+        assert!(!state.working(), "a closed turn is the end of the work, not the middle");
+        assert!(!state.waiting());
+    }
+
+    #[test]
+    fn a_turn_that_started_and_never_ended_is_working() {
+        let mut rows = opening("D:\\work", "Running right now");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        rows.push(serde_json::json!({"type": "step/start", "seq": 11, "time": 1_700_000_010_500u64, "data": {"turn": 1, "step": 1}}));
+        rows.push(serde_json::json!({"type": "tool/call", "seq": 12, "time": 1_700_000_011_000u64, "data": {"turn": 1, "step": 1, "name": "pwsh"}}));
+        let state = read_state(&log_at("open.v3.jsonl.zstd", &rows)).unwrap();
+        assert_eq!(state.edge, Some(Edge::TurnOpen));
+        assert_eq!(state.at, 1_700_000_010_000);
+        assert!(state.working());
+        assert!(!state.waiting());
+    }
+
+    /// The pair is what makes this state rather than a guess: an `asked` on its own is a question
+    /// still on screen, and the `decided` that follows it puts the session back to work.
+    #[test]
+    fn an_unanswered_approval_is_waiting_and_an_answered_one_is_not() {
+        let base = {
+            let mut rows = opening("D:\\work", "Waiting on you");
+            rows.push(turn_start(1, 1_700_000_010_000));
+            rows.push(serde_json::json!({"type": "tool/call", "seq": 11, "time": 1_700_000_011_000u64, "data": {"turn": 1, "step": 1, "name": "pwsh"}}));
+            rows
+        };
+        let mut asked = base.clone();
+        asked.push(serde_json::json!({"type": "approval/asked", "seq": 12, "time": 1_700_000_012_000u64, "data": {"id": "a-1", "toolName": "pwsh"}}));
+        let waiting = read_state(&log_at("asked.v3.jsonl.zstd", &asked)).unwrap();
+        assert!(waiting.waiting(), "an unanswered question is the one state that wants something");
+        assert!(!waiting.working(), "waiting outranks working rather than joining it");
+        assert_eq!(waiting.at, 1_700_000_012_000);
+
+        let mut decided = asked;
+        decided.push(serde_json::json!({"type": "approval/decided", "seq": 13, "time": 1_700_000_013_000u64, "data": {"id": "a-1", "decision": "allow"}}));
+        let settled = read_state(&log_at("decided.v3.jsonl.zstd", &decided)).unwrap();
+        assert!(settled.working());
+        assert!(!settled.waiting(), "the answer was given; there is nothing to wait for now");
+    }
+
+    /// A second turn opening after the first closed is the ordinary case of a session you came back
+    /// to, and the outward scan has to stop on the newer `turn/start` rather than the older pair.
+    #[test]
+    fn the_second_turn_is_the_one_that_decides() {
+        let mut rows = opening("D:\\work", "Two turns");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        rows.push(turn_end(1, 1_700_000_020_000));
+        rows.push(serde_json::json!({"type": "user/message", "seq": 21, "time": 1_700_000_030_000u64, "data": {"role": "user"}}));
+        rows.push(turn_start(2, 1_700_000_031_000));
+        rows.push(serde_json::json!({"type": "step/start", "seq": 22, "time": 1_700_000_031_500u64, "data": {"turn": 2, "step": 1}}));
+        let state = read_state(&log_at("twoturns.v3.jsonl.zstd", &rows)).unwrap();
+        assert_eq!(state.edge, Some(Edge::TurnOpen));
+        assert_eq!(state.at, 1_700_000_031_000);
+        assert!(state.working());
+    }
+
+    #[test]
+    fn the_header_and_the_title_are_read_from_the_opening_frames() {
+        let mut rows = opening("D:\\OB\\DAV", "统计 Obsidian 知识库笔记字数");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        rows.push(turn_end(1, 1_700_000_020_000));
+        let state = read_state(&log_at("named.v3.jsonl.zstd", &rows)).unwrap();
+        assert_eq!(state.title, "统计 Obsidian 知识库笔记字数");
+        assert_eq!(state.cwd, "D:\\OB\\DAV");
+    }
+
+    /// A log whose last frame is half-written — the normal state of one being appended to right now
+    /// — must still answer from the frames that did land.
+    #[test]
+    fn a_torn_trailing_frame_does_not_hide_the_turn_before_it() {
+        let mut rows = opening("D:\\work", "Torn tail");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        let mut bytes = framed(&rows);
+        bytes.extend_from_slice(&[0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x11, 0x22]); // a frame that never finished
+        let dir = std::env::temp_dir().join(format!("codenotch-dsh-state-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("torn.v3.jsonl.zstd");
+        std::fs::write(&path, &bytes).unwrap();
+        let state = read_state(&path).unwrap();
+        assert_eq!(state.edge, Some(Edge::TurnOpen));
+    }
+
+    #[test]
+    fn a_log_with_no_turn_at_all_is_neither_working_nor_waiting() {
+        let state = read_state(&log_at("bare.v3.jsonl.zstd", &opening("D:\\work", "Set up only"))).unwrap();
+        assert_eq!(state.edge, None);
+        assert!(!state.working());
+        assert!(!state.waiting());
+        assert_eq!(state.at, 0);
     }
 }

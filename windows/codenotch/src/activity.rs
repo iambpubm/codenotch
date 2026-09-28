@@ -1,23 +1,36 @@
 //! "Is it working?" for the providers the notch tracks.
 //!
-//! None of the three publishes a state field, so each is labelled with whatever it can honestly
-//! provide (the same trade-off upstream made):
+//! Only one of the five publishes a state field, so each is labelled with whatever it can honestly
+//! provide (the same trade-off upstream made). The two that matter for the shape of this file are
+//! opposite extremes: Cursor and the DeepSeek Harness *state* their state, and Codex, Antigravity
+//! and WorkBuddy have to be inferred from what they write:
 //!   - Cursor: the `composerHeaders` rows (JSON) in the editor's `state.vscdb` — `unfinishedRunAt`
 //!     is set for the duration of a run and cleared when it ends; `hasBlockingPendingActions` /
 //!     `hasPendingPlan` = waiting on you. This is **real state**. The database is in WAL mode, so
 //!     it must be opened as a plain read-only connection (immutable ignores the WAL and shows the
 //!     world as of the last checkpoint).
+//!   - DeepSeek Harness: the session log opens a turn with `turn/start` and closes it with
+//!     `turn/end`, and the harness writes that closing entry from a `finally`, so it lands whatever
+//!     ended the turn. **Real state, and exact** — no window, no threshold. `approval/asked` with no
+//!     `approval/decided` after it is the same for "waiting on you". See `dsh::read_state`.
 //!   - Codex: the desktop app keeps turn state in `thread_turns` inside
 //!     `~/.codex/thread_history_1.sqlite` (status = inProgress with an empty completed_at = running)
 //!     — real state. The CLI / VS Code extension fall back to classifying the last entry of the
 //!     rollout, with a silence threshold that depends on the entry type.
+//!   - WorkBuddy: its transcripts are the same idea as a Codex rollout written by another client, so
+//!     they are read the same way and with the same thresholds — the last entry says which part of a
+//!     turn the session stopped in, and how long the file has been quiet says whether it is still
+//!     there. No `approval` entries exist in this format at all, so it reports busy and never
+//!     waiting; the notch stays silent rather than inventing a state the file cannot support.
 //!   - Antigravity: transcript.jsonl is appended during a run (each step is written only once it
 //!     completes, so status is always DONE and useless); written within the last 45 s = working
 //!     (the model can think for a long time between steps, hence the wide window).
 //!
 //! Polled every 2 s (upstream cadence), broadcast only on change. Cost discipline: database
 //! connections stay open, nothing is re-queried unless the file's mtime changed, the rollout tail
-//! is re-read only when its mtime changed, and the thread runs at lowered priority.
+//! is re-read only when its mtime changed, and the thread runs at lowered priority. The two
+//! newest readers follow the same rule — listing a tree is the expensive part, so it happens on a
+//! timer, and a file is only parsed when its size or mtime says it moved.
 
 use crate::AppState;
 use serde::Serialize;
@@ -26,6 +39,30 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const INTERVAL: Duration = Duration::from_secs(2);
 const ANTIGRAVITY_STALE_MS: u64 = 45_000;
+
+/// How long a file may be quiet before its last entry stops counting as work. Three windows, one
+/// per kind of step, and the same three the Codex reader has always used — the two formats say the
+/// same things, so the same allowance fits both:
+///   - a tool call is running: a build or an install can take minutes, so ten;
+///   - the model is deciding: long reasoning has to be tolerated, so two minutes;
+///   - an answer has just landed: this is the end of a turn rather than work, so four seconds —
+///     long enough for the arc to settle instead of vanishing, short enough not to keep claiming a
+///     finished session is busy.
+const TOOL_QUIET_MS: u64 = 10 * 60_000;
+const THINKING_QUIET_MS: u64 = 120_000;
+const ANSWER_QUIET_MS: u64 = 4_000;
+
+/// Ten minutes, and it does two jobs. It is the widest of the three windows above, so a transcript
+/// older than this cannot be mid-turn and is dropped by the listing without being opened. And it is
+/// how long a `turn/start` with no `turn/end` is believed: the pair is authoritative exactly until
+/// the harness is killed, and then the log simply stops, because the `finally` that would have
+/// closed the turn never ran.
+const ACTIVE_MS: u64 = 10 * 60_000;
+
+/// How often the two session trees are re-listed. Walking directories and statting every session is
+/// the expensive half of both readers, and the set of files that could be working does not change
+/// anywhere near as fast as the 2 s tick.
+const LIST_INTERVAL: u64 = 15_000;
 
 #[derive(Clone, Serialize, Debug, PartialEq)]
 pub struct Activity {
@@ -106,6 +143,34 @@ impl DbCache {
     }
 }
 
+/// A file's identity for change detection. Either half moving means the file was written to, which
+/// is the only signal either of the two newest readers has that anything happened at all.
+fn file_sig(path: &std::path::Path) -> (u64, u64) {
+    let Ok(meta) = std::fs::metadata(path) else { return (0, 0) };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    (meta.len(), mtime)
+}
+
+/// A WorkBuddy transcript the probe is following, and the parse from the last time it moved.
+struct LiveTranscript {
+    path: std::path::PathBuf,
+    sig: (u64, u64),
+    state: Option<crate::workbuddy_tokens::State>,
+}
+
+/// A harness session the probe is following, likewise. Kept in its own type rather than shared with
+/// the transcript above because the two parses have nothing in common past the idea of a cache.
+struct LiveSession {
+    path: std::path::PathBuf,
+    sig: (u64, u64),
+    state: Option<crate::dsh::State>,
+}
+
 /// Everything the probe thread keeps between ticks
 struct Ctx {
     cursor: DbCache,
@@ -115,6 +180,10 @@ struct Ctx {
     rollout_checked_at: u64,
     rollout_sig: u64,
     rollout_last: Vec<Activity>,
+    workbuddy_live: Vec<LiveTranscript>,
+    workbuddy_listed_at: u64,
+    dsh_live: Vec<LiveSession>,
+    dsh_listed_at: u64,
 }
 
 impl Ctx {
@@ -128,6 +197,10 @@ impl Ctx {
             rollout_checked_at: 0,
             rollout_sig: 0,
             rollout_last: Vec::new(),
+            workbuddy_live: Vec::new(),
+            workbuddy_listed_at: 0,
+            dsh_live: Vec::new(),
+            dsh_listed_at: 0,
         }
     }
 }
@@ -377,6 +450,148 @@ fn antigravity_activity() -> Vec<Activity> {
     vec![Activity { provider: "gemini".into(), state: "busy".into(), name: "Antigravity".into(), detail: "Working".into(), since: at }]
 }
 
+// ---------------- WorkBuddy and the DeepSeek Harness ----------------
+
+/// What to call a session: the title it gave itself when it wrote one, otherwise the last segment of
+/// the directory it runs in. Both readers want the same thing said the same way, and a blank row is
+/// worse than a provider name, so there is always an answer.
+///
+/// A bare drive root names nothing — `C:\` would otherwise come out as `C:` — so it falls through to
+/// the provider name along with the empty cases.
+fn session_name(title: &str, cwd: &str, fallback: &str) -> String {
+    let title = title.trim();
+    if !title.is_empty() {
+        return title.to_string();
+    }
+    let tail = cwd
+        .trim_end_matches(|c| c == '\\' || c == '/')
+        .rsplit(|c| c == '\\' || c == '/')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if tail.is_empty() || tail.ends_with(':') {
+        fallback.to_string()
+    } else {
+        tail.to_string()
+    }
+}
+
+/// Whether a transcript's last entry still counts as work after `quiet` milliseconds of silence.
+///
+/// Split out from the walk so the thresholds can be tested at their edges rather than only in the
+/// middle: the boundaries are the whole content of this decision, and a window that is one
+/// millisecond too tight looks exactly like a correct one until the day it matters.
+fn step_still_running(step: crate::workbuddy_tokens::Step, quiet: u64) -> bool {
+    use crate::workbuddy_tokens::Step;
+    match step {
+        Step::Tool => quiet <= TOOL_QUIET_MS,
+        Step::Thinking | Step::Asked => quiet <= THINKING_QUIET_MS,
+        Step::Answered => quiet <= ANSWER_QUIET_MS,
+    }
+}
+
+/// WorkBuddy: the transcripts the app appends to, read the way a Codex rollout is because they are
+/// the same document written by a different client. The last entry says which part of a turn the
+/// session stopped in; the quiet time since says whether it is still there.
+///
+/// It reports busy and never waiting. This format has no approval entries at all — WorkBuddy asks
+/// for permission in its own window, not in the transcript — so a call that is only waiting on you
+/// is written exactly like one that is executing. There is no honest way to tell them apart from
+/// here, and a guess would put an amber "needs your input" on a cell that has nothing to say.
+fn workbuddy_activity(ctx: &mut Ctx) -> Vec<Activity> {
+    let now = now_ms();
+    if now.saturating_sub(ctx.workbuddy_listed_at) > LIST_INTERVAL {
+        ctx.workbuddy_listed_at = now;
+        // The listing already drops anything not written to inside the widest window, so no file
+        // older than a step could still be alive in is ever opened.
+        ctx.workbuddy_live = crate::workbuddy_tokens::recent_transcripts(ACTIVE_MS)
+            .into_iter()
+            .map(|(path, _)| LiveTranscript { path, sig: (0, 0), state: None })
+            .collect();
+    }
+    let mut out = Vec::new();
+    for row in ctx.workbuddy_live.iter_mut() {
+        let sig = file_sig(&row.path);
+        if sig != row.sig {
+            row.sig = sig;
+            row.state = crate::workbuddy_tokens::read_state(&row.path);
+        }
+        let Some(state) = row.state.as_ref() else { continue };
+        let Some((step, at)) = state.step else { continue };
+        if !step_still_running(step, now.saturating_sub(at)) {
+            continue;
+        }
+        out.push(Activity {
+            provider: "workbuddy".into(),
+            state: "busy".into(),
+            name: session_name(&state.title, &state.cwd, "WorkBuddy"),
+            detail: "Working".into(),
+            since: at,
+        });
+    }
+    out.sort_by_key(|a| std::cmp::Reverse(a.since));
+    out
+}
+
+/// The notch's word for a session log, and the line under it. Waiting outranks working because it
+/// is the state that wants something from you, and a closed turn is neither — the card draws
+/// nothing at all for it.
+fn dsh_label(state: &crate::dsh::State) -> Option<(&'static str, &'static str)> {
+    if state.waiting() {
+        Some(("waiting", "needs your input"))
+    } else if state.working() {
+        Some(("busy", "Working"))
+    } else {
+        None
+    }
+}
+
+/// The DeepSeek Harness states its own state, so this asks the log instead of consulting a table of
+/// thresholds: the last of `turn/start`, `turn/end`, `approval/asked` and `approval/decided` is the
+/// answer, and `turn/end` is written from a `finally` so it cannot be missed.
+///
+/// One heuristic survives, for a harness that was killed: a turn left open by a process that died
+/// looks exactly like a turn left open by a process that is thinking, and the only thing that tells
+/// them apart is whether the log is still being written to. Ten minutes of silence is the same
+/// allowance the tool window makes, and covers a model working through one long step.
+fn dsh_activity(ctx: &mut Ctx) -> Vec<Activity> {
+    let now = now_ms();
+    if now.saturating_sub(ctx.dsh_listed_at) > LIST_INTERVAL {
+        ctx.dsh_listed_at = now;
+        // Listing returns every session the machine has ever run, so the filter is what keeps this
+        // off the history: a log untouched for ten minutes cannot be holding an open turn.
+        ctx.dsh_live = crate::dsh::session_logs()
+            .into_iter()
+            .filter(|path| now.saturating_sub(file_sig(path).1) <= ACTIVE_MS)
+            .map(|path| LiveSession { path, sig: (0, 0), state: None })
+            .collect();
+    }
+    let mut out = Vec::new();
+    for row in ctx.dsh_live.iter_mut() {
+        let sig = file_sig(&row.path);
+        if sig != row.sig {
+            row.sig = sig;
+            row.state = crate::dsh::read_state(&row.path);
+        }
+        if now.saturating_sub(sig.1) > ACTIVE_MS {
+            continue; // killed rather than thinking
+        }
+        let Some(state) = row.state.as_ref() else { continue };
+        let Some((label, detail)) = dsh_label(state) else { continue };
+        out.push(Activity {
+            provider: "dsh".into(),
+            state: label.into(),
+            name: session_name(&state.title, &state.cwd, "DeepSeek Harness"),
+            detail: detail.into(),
+            since: state.at,
+        });
+    }
+    // Waiting before busy, newest first within each — the order the card draws them in, so what
+    // gets cut by the row limit is what matters least.
+    out.sort_by_key(|a| (a.state != "waiting", std::cmp::Reverse(a.since)));
+    out
+}
+
 // ---------------- Putting it together ----------------
 
 #[derive(Clone, Copy, Default)]
@@ -384,10 +599,20 @@ pub struct Presence {
     cursor: bool,
     codex: bool,
     gemini: bool,
+    workbuddy: bool,
+    dsh: bool,
 }
 
 fn presence() -> Presence {
-    Presence { cursor: crate::cursor::present(), codex: crate::codex::present(), gemini: crate::antigravity::present() }
+    Presence {
+        cursor: crate::cursor::present(),
+        codex: crate::codex::present(),
+        gemini: crate::antigravity::present(),
+        // Both of these answer for a transcript tree, not for an account, so they are present
+        // exactly when there is something on disk to read — the same test the token halves make.
+        workbuddy: crate::workbuddy_tokens::present(),
+        dsh: crate::dsh::present(),
+    }
 }
 
 fn read_all(p: Presence, ctx: &mut Ctx) -> Vec<Activity> {
@@ -401,12 +626,30 @@ fn read_all(p: Presence, ctx: &mut Ctx) -> Vec<Activity> {
     if p.gemini {
         all.extend(antigravity_activity());
     }
+    if p.workbuddy {
+        all.extend(workbuddy_activity(ctx));
+    }
+    if p.dsh {
+        all.extend(dsh_activity(ctx));
+    }
     all
 }
 
-/// For doctor: the raw material behind the Codex working-state decision
-pub fn probe() -> String {
-    let now = now_ms();
+/// A path short enough to sit in one line of a report. The harness names every log
+/// `session.v3.jsonl.zstd`, so the session's own directory is the only part that tells two of them
+/// apart; the client transcripts are already named by their session id.
+fn file_label(path: &std::path::Path) -> String {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    if name.starts_with("session.") {
+        if let Some(dir) = path.parent().and_then(|p| p.file_name()) {
+            return dir.to_string_lossy().to_string();
+        }
+    }
+    name
+}
+
+/// The raw material behind the Codex working-state decision.
+fn codex_probe(now: u64) -> String {
     let Some(p) = crate::codex::newest_rollout() else { return "Codex activity: no rollout found".into() };
     let age = now.saturating_sub(mtime_ms(&p).unwrap_or(0)) / 1000;
     let step = crate::codex::tail_text(&p).and_then(|t| codex_last_step(&t));
@@ -437,6 +680,64 @@ pub fn probe() -> String {
         step.map(|(s, ts)| format!("{s:?} @{}s ago", now.saturating_sub(ts) / 1000)),
         tail.join(", ")
     )
+}
+
+/// The transcripts the WorkBuddy half is following and what each one's last entry said, so a wrong
+/// answer can be traced to the file it came from instead of guessed at.
+fn workbuddy_probe(now: u64) -> String {
+    let files = crate::workbuddy_tokens::recent_transcripts(ACTIVE_MS);
+    if files.is_empty() {
+        return format!("WorkBuddy activity: no transcript written to in the last {}s", ACTIVE_MS / 1000);
+    }
+    let parts: Vec<String> = files
+        .iter()
+        .take(4)
+        .map(|(path, _)| {
+            let step = crate::workbuddy_tokens::read_state(path)
+                .and_then(|s| s.step)
+                .map(|(step, at)| format!("{step:?} @{}s ago", now.saturating_sub(at) / 1000))
+                .unwrap_or_else(|| "no state entry".into());
+            format!("{} -> {step}", file_label(path))
+        })
+        .collect();
+    format!("WorkBuddy activity: {} in window [{}]", files.len(), parts.join(", "))
+}
+
+/// The harness sessions being followed and the last turn edge in each, which is the whole of that
+/// half's decision.
+fn dsh_probe(now: u64) -> String {
+    let logs = crate::dsh::session_logs();
+    if logs.is_empty() {
+        return "DeepSeek Harness activity: no session logs".into();
+    }
+    let live: Vec<_> = logs.iter().filter(|p| now.saturating_sub(file_sig(p).1) <= ACTIVE_MS).collect();
+    let parts: Vec<String> = live
+        .iter()
+        .take(4)
+        .map(|path| match crate::dsh::read_state(path) {
+            Some(state) => format!(
+                "{} -> {:?} @{}s ago",
+                file_label(path),
+                state.edge,
+                now.saturating_sub(state.at) / 1000
+            ),
+            None => format!("{} -> unreadable", file_label(path)),
+        })
+        .collect();
+    format!(
+        "DeepSeek Harness activity: {} of {} logs live [{}]",
+        live.len(),
+        logs.len(),
+        parts.join(", ")
+    )
+}
+
+/// For doctor: the raw material behind every working-state decision. One line per provider, because
+/// the thresholds and the evidence are different in each and a report that merged them could not be
+/// checked against the files.
+pub fn probe() -> String {
+    let now = now_ms();
+    [codex_probe(now), workbuddy_probe(now), dsh_probe(now)].join("\n  ")
 }
 
 #[cfg(windows)]
@@ -479,4 +780,75 @@ pub fn start(app: AppHandle) {
             std::thread::sleep(INTERVAL);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workbuddy_tokens::Step;
+
+    #[test]
+    fn a_session_is_named_by_its_own_title_when_it_has_one() {
+        assert_eq!(session_name("Fix the ring", "D:\\work\\thing", "WorkBuddy"), "Fix the ring");
+        assert_eq!(session_name("  让项目1支持WorkBuddy  ", "", "WorkBuddy"), "让项目1支持WorkBuddy");
+    }
+
+    /// The directory is the fallback that still says which session it is, and the provider name is
+    /// the fallback for the fallback — a blank row would be worse than either.
+    #[test]
+    fn a_session_without_a_title_is_named_by_the_directory_it_runs_in() {
+        assert_eq!(session_name("", "D:\\WorkBuddyWorkSpace\\2026-09-27-00-18-14", "WorkBuddy"),
+                   "2026-09-27-00-18-14");
+        assert_eq!(session_name("", "/home/dav/vault/", "DeepSeek Harness"), "vault");
+        assert_eq!(session_name("", "D:\\OB\\DAV", "DeepSeek Harness"), "DAV");
+        assert_eq!(session_name("", "", "WorkBuddy"), "WorkBuddy");
+        // A drive root has no last segment worth printing, and "C:" names nothing.
+        assert_eq!(session_name("", "C:\\", "WorkBuddy"), "WorkBuddy");
+        assert_eq!(session_name("", "/", "DeepSeek Harness"), "DeepSeek Harness");
+    }
+
+    /// The boundaries are the whole content of the decision, so they are asserted on both sides of
+    /// each one. A window that is a millisecond too tight looks exactly like a correct one until
+    /// the day it hides work that was happening.
+    #[test]
+    fn each_kind_of_step_gets_the_window_it_deserves() {
+        assert!(step_still_running(Step::Tool, 0));
+        assert!(step_still_running(Step::Tool, TOOL_QUIET_MS));
+        assert!(!step_still_running(Step::Tool, TOOL_QUIET_MS + 1));
+
+        assert!(step_still_running(Step::Thinking, THINKING_QUIET_MS));
+        assert!(!step_still_running(Step::Thinking, THINKING_QUIET_MS + 1));
+        assert!(step_still_running(Step::Asked, THINKING_QUIET_MS));
+        assert!(!step_still_running(Step::Asked, THINKING_QUIET_MS + 1));
+
+        assert!(step_still_running(Step::Answered, ANSWER_QUIET_MS));
+        assert!(!step_still_running(Step::Answered, ANSWER_QUIET_MS + 1));
+
+        // A tool call outlives a thought by an order of magnitude, which is the point of having
+        // three windows: a build is not a thought and must not be given a thought's allowance.
+        assert!(TOOL_QUIET_MS > THINKING_QUIET_MS * 4);
+        assert!(THINKING_QUIET_MS > ANSWER_QUIET_MS * 4);
+        // The listing filter is the widest of them, or a file could be dropped while a step in it
+        // was still inside its own window.
+        assert!(ACTIVE_MS >= TOOL_QUIET_MS);
+    }
+
+    /// Waiting outranks working because it is the one state that wants something from you, and a
+    /// closed turn draws nothing at all rather than an empty row.
+    #[test]
+    fn a_closed_turn_draws_nothing_and_an_open_one_says_working() {
+        let with = |edge| crate::dsh::State { edge: Some(edge), ..Default::default() };
+        assert_eq!(dsh_label(&with(crate::dsh::Edge::TurnClosed)), None);
+        assert_eq!(dsh_label(&with(crate::dsh::Edge::TurnOpen)), Some(("busy", "Working")));
+        assert_eq!(dsh_label(&with(crate::dsh::Edge::ApprovalAsked)), Some(("waiting", "needs your input")));
+        assert_eq!(dsh_label(&with(crate::dsh::Edge::ApprovalSettled)), Some(("busy", "Working")));
+    }
+
+    #[test]
+    fn a_log_with_no_edges_at_all_is_not_drawn() {
+        let empty = crate::dsh::State::default();
+        assert_eq!(dsh_label(&empty), None);
+        assert!(!empty.working(), "not knowing a state is not the same as knowing it is idle");
+        assert!(!empty.waiting());
+    }
 }
