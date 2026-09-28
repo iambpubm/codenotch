@@ -76,6 +76,14 @@ const MAX_TRANSCRIPT_BYTES: u64 = 256 * 1024 * 1024;
 const ZSTD_MAGIC: u32 = 0xFD2F_B528;
 /// Days kept in the per-file cache: past this nothing is reported, so nothing needs keeping.
 const KEEP_DAYS: i32 = 31;
+/// Bumped whenever the fold changes what a transcript is worth. A cache an older reader wrote is
+/// not merely out of date — it is wrong in a way that nothing downstream can detect, because the
+/// whole point of the cache is to skip the read that would reveal it. Discarding a mismatch costs
+/// one re-read, and is the only safe answer.
+///
+/// Version 2: the reader that wrote version 1 could not see past a transcript's first frame, so
+/// every entry in such a cache totals a whole session as nothing.
+const CACHE_SCHEMA: u32 = 2;
 
 static REFRESH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -549,17 +557,36 @@ struct FileTotals {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct TotalsCache {
+    /// Absent from a cache written before this field existed, which is precisely the case that has
+    /// to be rejected: those entries were produced by the reader that could not see past a frame
+    /// header, and each one states that a transcript holding real history is worth nothing.
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
     files: HashMap<String, FileTotals>,
 }
 
-fn load_cache() -> TotalsCache {
-    std::fs::read_to_string(cache_path())
-        .ok()
-        .and_then(|t| serde_json::from_str::<TotalsCache>(&t).ok())
-        .unwrap_or_default()
+/// Hold a cache to the schema this reader writes. Split out from the file read so the rule can be
+/// exercised without a disk.
+fn usable(cache: TotalsCache) -> TotalsCache {
+    if cache.schema == CACHE_SCHEMA {
+        cache
+    } else {
+        TotalsCache { schema: CACHE_SCHEMA, ..Default::default() }
+    }
 }
 
-fn save_cache(cache: &TotalsCache) {
+fn load_cache() -> TotalsCache {
+    usable(
+        std::fs::read_to_string(cache_path())
+            .ok()
+            .and_then(|t| serde_json::from_str::<TotalsCache>(&t).ok())
+            .unwrap_or_default(),
+    )
+}
+
+fn save_cache(cache: &mut TotalsCache) {
+    cache.schema = CACHE_SCHEMA;
     if let Ok(t) = serde_json::to_string(cache) {
         let _ = std::fs::write(cache_path(), t);
     }
@@ -1007,6 +1034,33 @@ mod tests {
             text.contains(r#""type":"permission/preset""#),
             "the record carried by the second frame is missing"
         );
+    }
+
+    /// A cache that a reader unable to see past a frame header wrote states that every transcript is
+    /// worth nothing — and reuse would keep it stating that, because the files never change again
+    /// and the size and mtime keys still match. Discarding on a schema miss is what lets a corrected
+    /// reader get back to history it has already walked once.
+    #[test]
+    fn a_cache_written_by_an_older_reader_is_discarded() {
+        let stale: TotalsCache = serde_json::from_str(
+            r#"{"files":{"C:\\x\\session.v3.jsonl.zstd":{"size":94575,"mtime_ms":1,"days":{}}}}"#,
+        )
+        .expect("a cache carrying no schema must still parse, or the discard never gets to run");
+        assert_eq!(stale.schema, 0, "a missing schema reads as zero");
+        assert!(!stale.files.is_empty(), "the fixture is pointless without an entry to drop");
+
+        let kept = usable(stale);
+        assert!(kept.files.is_empty(), "an entry from an older schema must not survive the load");
+        assert_eq!(kept.schema, CACHE_SCHEMA, "what is accepted carries the current schema");
+    }
+
+    /// The other half of the rule: what this reader wrote is reused as it stands.
+    #[test]
+    fn a_cache_written_by_this_reader_is_kept() {
+        let entry = FileTotals { size: 9, mtime_ms: 8, days: BTreeMap::from([(7, 6)]) };
+        let current =
+            TotalsCache { schema: CACHE_SCHEMA, files: HashMap::from([("k".to_string(), entry)]) };
+        assert_eq!(usable(current).files.len(), 1);
     }
 
     /// A frame boundary scan must not be fooled into reading a torn tail as a frame.

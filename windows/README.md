@@ -123,8 +123,14 @@ last thirty. There is no allowance to divide by, so the ring draws its track und
 cell prints the figure. Records older than thirty-one days are dropped on the way in, so a
 session running since spring costs one pass over the file rather than a growing sum.
 
-Three details of the format change the number, so they are worth stating:
+Four details of the format change the number, so they are worth stating:
 
+- **A transcript is a concatenation of frames, not one archive.** The writer appends a whole
+  zstd frame per flush, so a live `session.v3.jsonl.zstd` is dozens of frames laid end to end.
+  Frame boundaries are located by walking the framing without decompressing, so every frame is
+  read and a torn last frame — the normal state of a session being written right now — is
+  skipped instead of ending the parse. A reader that decodes the file as a single frame gets
+  the session header back and nothing else.
 - **Reasoning is inside output, not beside it.** DSH reports `outputTokens` inclusive of
   reasoning, so subtracting reasoning would under-count every reasoning-heavy session by
   exactly its reasoning tokens. The total is `input + output + cacheRead + cacheWrite`.
