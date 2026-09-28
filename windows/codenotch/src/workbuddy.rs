@@ -64,6 +64,23 @@ use tauri::{AppHandle, Emitter, Manager};
 const ENDPOINT: &str = "https://copilot.tencent.com";
 const PERSONAL_PATH: &str = "/v2/billing/meter/get-user-resource";
 const ENTERPRISE_PATH: &str = "/v2/billing/meter/get-enterprise-user-usage";
+/// The gateway in front of the billing endpoint screens on `User-Agent` before it looks at the token
+/// at all, and answers a request it does not recognise with `403 {"code":10085}` — a plain "请求不合法"
+/// that names nothing, so it reads like a bad credential and sends you hunting through the paste.
+///
+/// Measured against the live endpoint with one working credential: no header, an empty one, `ureq/…`
+/// and `python-requests/…` were all refused; `Mozilla/5.0`, `curl/8.0`, `CodeBuddy/1.0` and a full
+/// browser string all reached the balance. ureq's own default is in the refused set, so leaving this
+/// to the client is not an option — the header has to be set explicitly.
+///
+/// The shape here is the one least likely to fall out of favour: a browser-shaped prefix, with this
+/// app named in it so a server operator reading a log can tell where the request came from.
+const USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ",
+    "Codenotch/",
+    env!("CARGO_PKG_VERSION"),
+    " Chrome/131.0.0.0 Safari/537.36"
+);
 /// The product the official client asks for, so the server selects the same packages it does.
 const PRODUCT_CODE: &str = "p_tcaca";
 /// The official client's window: it wants every package that expires inside the next 101 years.
@@ -709,6 +726,7 @@ fn fetch_once(session: &Session) -> Result<serde_json::Value, FetchErr> {
     let mut req = ureq::post(&url)
         .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
         .set("Accept", "application/json")
+        .set("User-Agent", USER_AGENT)
         .set("Authorization", &format!("Bearer {}", session.token))
         .set("X-User-Id", &session.user_id);
     if enterprise {
@@ -1180,6 +1198,28 @@ mod tests {
     fn the_package_window_is_written_the_way_the_request_asks_for_it() {
         assert_eq!(format_local(0).len(), 19, "YYYY-MM-DD HH:MM:SS");
         assert!(format_local(0).contains(' '));
+    }
+
+    /// The gateway screens on `User-Agent` before it looks at the credential, so an unrecognised one
+    /// turns a working token into `403 {"code":10085}` — an error that names neither the header nor
+    /// the reason, and reads exactly like a bad paste. The header is set explicitly for that reason,
+    /// and these are the shapes measured against the live endpoint: the ones on the right reached the
+    /// balance, the ones on the left were refused before it.
+    #[test]
+    fn the_request_carries_a_user_agent_the_gateway_accepts() {
+        assert!(USER_AGENT.starts_with("Mozilla/5.0"), "a browser-shaped prefix: {USER_AGENT}");
+        assert!(USER_AGENT.contains("Codenotch/"), "and this app named in it: {USER_AGENT}");
+        assert!(!USER_AGENT.trim().is_empty());
+
+        // ureq's own default, which is what the header would be if this line were ever dropped.
+        let refused_by_the_gateway = ["ureq", "python-requests", "python-urllib"];
+        let lowered = USER_AGENT.to_lowercase();
+        for refused in refused_by_the_gateway {
+            assert!(
+                !lowered.starts_with(refused),
+                "{refused} is refused by the gateway, so it cannot be the user agent"
+            );
+        }
     }
 
     // ---------------- a credential the user pasted in ----------------

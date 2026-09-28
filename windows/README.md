@@ -109,10 +109,44 @@ else: the token windows lead the ring and the cell says why the balance is missi
 `Unreadable` is a real dead end rather than a prompt: the seal is symmetric and the key
 never leaves the WorkBuddy process, so no amount of reading the file will open it. The
 way through is to hand Codenotch a credential once. Turn WorkBuddy's cell on in
-**Settings → Accounts** and a small row appears under it — paste the `Authorization`
-value from the app's own developer tools (the network tab of a `copilot.tencent.com`
-call), save, and the balance fills in. The token windows lead the ring either way, so
-the cell is useful before and after.
+**Settings → Accounts** and a small row appears under it — paste a credential, save, and
+the balance fills in. The token windows lead the ring either way, so the cell is useful
+before and after.
+
+##### Where a credential comes from
+
+This is the awkward part, because WorkBuddy does not offer a supported way to look at its
+own token, and two obvious routes are closed: the desktop build ships with its developer
+tools disabled (the only `openDevTools` calls in it belong to embedded third-party web
+views and are development-only), and the web build authenticates with a cookie rather than
+a bearer token, so a browser's network panel has nothing to copy. That leaves:
+
+- **A plaintext session left behind by an older build.** Before `5.6.0` the app wrote the
+  same session file unsealed, and upgrading does not delete what it wrote. Any
+  `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop*.info` whose
+  `auth.accessToken` is a string rather than a `{$wbEncrypted: 1, …}` object still holds a
+  usable one: copy that field's value. The `auth.expiresAt` beside it (ms epoch) says how
+  long it lasts; those sessions were issued for roughly 55 days. It pays to check it is the
+  account you think it is — `account.uid` is in the same file, and a machine that has held
+  more than one sign-in leaves a file per account, named after the moment it was written.
+- **Capture one request.** Otherwise the token has to be read off the wire: a debugging
+  proxy whose root certificate is trusted (Fiddler, Charles, mitmproxy), then copy the
+  `Authorization` header from any
+  `POST https://copilot.tencent.com/v2/billing/meter/get-user-resource` the app makes while
+  the account page is open.
+
+#### The request contract
+
+The gateway in front of the billing endpoint screens on `User-Agent` **before it looks at
+the token**, and refuses a request it does not recognise with `403 {"code":10085}` — plain
+"请求不合法", naming neither the header nor the reason, which reads exactly like a bad
+credential and sends you back to re-paste a token that was never the problem. Measured
+against the live endpoint with one working credential: no header, an empty one, `ureq/…`
+and `python-requests/…` were all refused, while `Mozilla/5.0`, `curl/8.0`, `CodeBuddy/1.0`
+and a full browser string all reached the balance. ureq's own default sits in the refused
+set, so the header is set explicitly rather than left to the client.
+
+The rest of the contract:
 
 - The credential is written to `%APPDATA%\codenotch\workbuddy-credential.json`, in your
   own profile, and is sent to nothing but `copilot.tencent.com`. The enterprise and user
