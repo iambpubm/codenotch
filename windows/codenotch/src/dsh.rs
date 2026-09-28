@@ -50,10 +50,10 @@
 //!   - **The first frame that will not decode is the recovery boundary.** Nothing after it is
 //!     trusted, because a corrupt frame means the file is not what we think it is.
 
-use crate::usage::{LimitWindow, UsageSnapshot};
+use crate::usage::{CostEstimate, CostPart, LimitWindow, UsageSnapshot};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -83,7 +83,80 @@ const KEEP_DAYS: i32 = 31;
 ///
 /// Version 2: the reader that wrote version 1 could not see past a transcript's first frame, so
 /// every entry in such a cache totals a whole session as nothing.
-const CACHE_SCHEMA: u32 = 2;
+///
+/// Version 3: a file's totals became a day → model → tokens map so spend can be priced per model and
+/// per time-of-day band. A version 2 entry holds bare per-day token counts, which carry neither, so
+/// it cannot be reinterpreted — the type changed, and the old shape must not survive as a plausible
+/// reading with the money missing.
+const CACHE_SCHEMA: u32 = 3;
+
+/// China Standard Time has no daylight saving: a fixed UTC+8, all year.
+const BEIJING_OFFSET_SECS: i64 = 8 * 3600;
+
+/// A model's price, in the vendor's currency per million tokens.
+///
+/// Kept as three separate rates because the vendor's own spread is enormous: DeepSeek charges fifty
+/// times more for a cache-miss input token than a cache-hit one, and four times more again for an
+/// output token. A single blended rate would be wrong for every session, in both directions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RateCard {
+    hit: f64,
+    miss: f64,
+    output: f64,
+}
+
+/// DeepSeek's published rate card, in CNY per million tokens, read from its "Models & Pricing" page
+/// on 2026-09-28. Off-peak and peak are both written out rather than one derived from the other:
+/// the doubling is the vendor's current rule and not a law of nature, and a future card that breaks
+/// it should not need this file rewritten to be correct.
+const FLASH_OFF: RateCard = RateCard { hit: 0.02, miss: 1.0, output: 4.0 };
+const FLASH_PEAK: RateCard = RateCard { hit: 0.04, miss: 2.0, output: 8.0 };
+const PRO_OFF: RateCard = RateCard { hit: 0.15, miss: 4.5, output: 13.5 };
+const PRO_PEAK: RateCard = RateCard { hit: 0.30, miss: 9.0, output: 27.0 };
+
+/// The rate card for a model name, as (off-peak, peak).
+///
+/// `None` for a model this build does not know, and that is deliberate: the caller drops such usage
+/// from every figure and names it instead. Pricing an unknown model off a sibling's card would
+/// produce a number that looks authoritative and is simply not the one the vendor would bill.
+///
+/// `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are the vendor's own retired aliases —
+/// requests to them are served by the Flash model and billed at Flash rates — so they share its card.
+/// The `-pro` prefix is checked first because it is the longer, more specific name.
+fn rate_card(model: &str) -> Option<(RateCard, RateCard)> {
+    let m = model.trim().to_ascii_lowercase();
+    if m.starts_with("deepseek-v4-pro") || m.starts_with("deepseek-pro") {
+        return Some((PRO_OFF, PRO_PEAK));
+    }
+    if m.starts_with("deepseek-flash")
+        || m.starts_with("deepseek-v4-flash")
+        || m.starts_with("deepseek-v4.1-flash")
+    {
+        return Some((FLASH_OFF, FLASH_PEAK));
+    }
+    None
+}
+
+/// Whether a transcript timestamp falls in a peak-priced hour.
+///
+/// The vendor's rule: Beijing time, Monday to Friday, 09:00–12:00 and 14:00–18:00 are peak; every
+/// other hour — including weekends and public holidays — is off-peak, at half the price.
+///
+/// Public holidays are treated as ordinary weekdays here. Which days are holidays is published
+/// afresh every year, so a table baked into this build is guaranteed to expire, and the mistake is
+/// one-directional: reading a holiday as a peak weekday overstates those days' cost, while the
+/// reverse understates it. Overstating is the safe direction for an estimate.
+fn is_peak(ms: u64) -> bool {
+    let secs = (ms / 1000) as i64 + BEIJING_OFFSET_SECS;
+    let days = secs.div_euclid(86_400);
+    let hour = secs.rem_euclid(86_400) / 3600;
+    // 1970-01-01 was a Thursday, so shifting by 3 makes 0 mean Monday.
+    let weekday = (days + 3).rem_euclid(7);
+    if weekday >= 5 {
+        return false;
+    }
+    (9..12).contains(&hour) || (14..18).contains(&hour)
+}
 
 static REFRESH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -393,6 +466,77 @@ fn last_stream_usage(stream: Option<&serde_json::Value>) -> Option<&serde_json::
     None
 }
 
+/// One billable event's tokens, split the way the vendor bills them.
+///
+/// Verified against 72 real events in this machine's transcripts: `inputTokens` and
+/// `cacheReadTokens` are disjoint, and `totalTokens` is their sum plus `outputTokens` — so the
+/// uncached input is `inputTokens` itself, not `inputTokens - cacheReadTokens`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+struct Charge {
+    /// Input that missed the cache (`inputTokens`). The expensive half.
+    miss: u64,
+    /// Input served from the cache (`cacheReadTokens`). Fifty times cheaper on DeepSeek, which is why
+    /// the split is kept rather than folded into `miss`.
+    hit: u64,
+    /// Cache writes (`cacheWriteTokens`). DeepSeek does not bill these apart — a token written to the
+    /// cache was already counted as a miss — so they ride with `miss`. Always zero in the harness's
+    /// current transcripts, kept so a future one that starts writing them is still priced right.
+    write: u64,
+    /// Output, reasoning included as a subset, exactly as `Tokens::total` counts it.
+    output: u64,
+}
+
+impl Charge {
+    fn of(tokens: &Tokens) -> Charge {
+        Charge {
+            miss: tokens.input.max(0) as u64,
+            hit: tokens.cache_read.max(0) as u64,
+            write: tokens.cache_write.max(0) as u64,
+            output: tokens.output.max(0) as u64,
+        }
+    }
+
+    fn total(&self) -> u64 {
+        self.miss + self.hit + self.write + self.output
+    }
+
+    fn merge(&mut self, other: &Charge) {
+        self.miss += other.miss;
+        self.hit += other.hit;
+        self.write += other.write;
+        self.output += other.output;
+    }
+}
+
+/// One model's day of usage, with the peak band kept apart from the off-peak one.
+///
+/// The split has to happen on the event, never on the day: peak hours cover only part of a weekday,
+/// so the same day's tokens price differently depending on when inside it they were spent, and once
+/// they are summed into one figure that information is gone for good.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+struct DayCharge {
+    peak: Charge,
+    off: Charge,
+}
+
+impl DayCharge {
+    fn total(&self) -> u64 {
+        self.peak.total() + self.off.total()
+    }
+
+    fn merge(&mut self, other: &DayCharge) {
+        self.peak.merge(&other.peak);
+        self.off.merge(&other.off);
+    }
+}
+
+/// Everything the machine's transcripts add up to: local day → model → that model's day.
+///
+/// The model is part of the key because the rate card is per model. A day on its own can be counted
+/// but not priced, and the previous shape — a bare day → token count — is exactly why the cache
+/// schema had to be bumped rather than migrated.
+type DayIndex = BTreeMap<i32, BTreeMap<String, DayCharge>>;
+
 #[derive(Debug, Clone)]
 struct UsageEvent {
     record_index: usize,
@@ -405,9 +549,10 @@ struct UsageEvent {
     kind: &'static str,
 }
 
-/// Totals per local day for one transcript. Only complete, non-inherited, de-duplicated charges
-/// are in here; everything the harness itself would not count is filtered out before it lands.
-fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
+/// Totals per local day for one transcript, split by model and by pricing band. Only complete,
+/// non-inherited, de-duplicated charges are in here; everything the harness itself would not count
+/// is filtered out before it lands.
+fn fold_transcript(text: &str) -> DayIndex {
     let mut header_id = String::new();
     let mut header_index: Option<usize> = None;
     let mut seed_length: Option<i64> = None;
@@ -509,7 +654,7 @@ fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
     let cut_unknowable = is_seeded && inherited_cut.is_none() && !seed_boundary_seen;
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut days: BTreeMap<i32, u64> = BTreeMap::new();
+    let mut days: DayIndex = BTreeMap::new();
     for event in events {
         let cut_applies = header_index.map(|h| event.record_index > h).unwrap_or(false);
         if cut_applies && cut_unknowable {
@@ -537,7 +682,17 @@ fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
         if !seen.insert(dedup) {
             continue;
         }
-        *days.entry(local_day(event.time)).or_insert(0) += event.tokens.total().max(0) as u64;
+        let charge = Charge::of(&event.tokens);
+        let slot = days
+            .entry(local_day(event.time))
+            .or_default()
+            .entry(event.model.clone())
+            .or_default();
+        if is_peak(event.time) {
+            slot.peak.merge(&charge);
+        } else {
+            slot.off.merge(&charge);
+        }
     }
     let cutoff = local_day(now_ms()) - KEEP_DAYS;
     days.retain(|day, _| *day >= cutoff);
@@ -550,9 +705,9 @@ fn fold_transcript(text: &str) -> BTreeMap<i32, u64> {
 struct FileTotals {
     size: u64,
     mtime_ms: u64,
-    /// Tokens per local day (days-from-CE), so a restart does not have to decode the whole history
-    /// again.
-    days: BTreeMap<i32, u64>,
+    /// Tokens per local day (days-from-CE), per model and pricing band, so a restart does not have to
+    /// decode the whole history again.
+    days: DayIndex,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -601,11 +756,14 @@ fn mtime_ms_of(meta: &std::fs::Metadata) -> u64 {
 }
 
 /// One full pass: read what changed, reuse what did not, and total every live transcript by day.
-fn scan(cache: &mut TotalsCache) -> (BTreeMap<i32, u64>, usize) {
+///
+/// One session can be spread over several transcripts, so the per-file days are merged — per day and
+/// per model, with the pricing bands added together component by component.
+fn scan(cache: &mut TotalsCache) -> (DayIndex, usize) {
     let Some(root) = sessions_root() else { return (BTreeMap::new(), 0) };
     let files = preferred_transcripts(&root);
     let mut live: HashMap<String, FileTotals> = HashMap::new();
-    let mut total: BTreeMap<i32, u64> = BTreeMap::new();
+    let mut total: DayIndex = BTreeMap::new();
 
     for path in &files {
         let Ok(meta) = std::fs::metadata(path) else { continue };
@@ -624,8 +782,11 @@ fn scan(cache: &mut TotalsCache) -> (BTreeMap<i32, u64>, usize) {
                 FileTotals { size, mtime_ms, days }
             }
         };
-        for (day, tokens) in &entry.days {
-            *total.entry(*day).or_insert(0) += *tokens;
+        for (day, models) in &entry.days {
+            let slot = total.entry(*day).or_default();
+            for (model, charge) in models {
+                slot.entry(model.clone()).or_default().merge(charge);
+            }
         }
         live.insert(key, entry);
     }
@@ -633,11 +794,74 @@ fn scan(cache: &mut TotalsCache) -> (BTreeMap<i32, u64>, usize) {
     (total, files.len())
 }
 
-fn total_between(days: &BTreeMap<i32, u64>, from_day: i32, to_day: i32) -> u64 {
-    days.iter().filter(|(day, _)| **day >= from_day && **day <= to_day).map(|(_, t)| *t).sum()
+fn total_between(days: &DayIndex, from_day: i32, to_day: i32) -> u64 {
+    days.range(from_day..=to_day)
+        .map(|(_, models)| models.values().map(DayCharge::total).sum::<u64>())
+        .sum()
 }
 
-fn count_window(id: &str, label: &str, tokens: u64) -> LimitWindow {
+/// What a transcript that names no model is called when it has to be shown to someone.
+const UNLABELLED_MODEL: &str = "(unlabelled)";
+
+/// What a span of history comes to in money, and how it breaks down.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Quote {
+    total: f64,
+    hit_tokens: u64,
+    hit_cost: f64,
+    miss_tokens: u64,
+    miss_cost: f64,
+    output_tokens: u64,
+    output_cost: f64,
+    /// Models that carried tokens but have no rate card here. Their usage is left out of every figure
+    /// rather than priced by guesswork, and naming them is how the card says why a total may read
+    /// lower than the token count above it suggests.
+    unpriced: BTreeSet<String>,
+}
+
+impl Quote {
+    fn absorb(&mut self, charge: &Charge, rates: &RateCard) {
+        let per_million = |tokens: u64, rate: f64| tokens as f64 * rate / 1_000_000.0;
+        self.hit_tokens += charge.hit;
+        self.hit_cost += per_million(charge.hit, rates.hit);
+        // A cache write rides with the misses: the vendor bills that token once, at the miss rate.
+        let miss = charge.miss + charge.write;
+        self.miss_tokens += miss;
+        self.miss_cost += per_million(miss, rates.miss);
+        self.output_tokens += charge.output;
+        self.output_cost += per_million(charge.output, rates.output);
+    }
+
+    /// The total is only ever the sum of the parts, computed in one place so a caller cannot report a
+    /// total that disagrees with the rows above it.
+    fn settle(&mut self) {
+        self.total = self.hit_cost + self.miss_cost + self.output_cost;
+    }
+}
+
+/// Price every model's usage between two local days, inclusive. Each band is priced at its own rate
+/// card, and an unknown model contributes nothing but its name.
+fn quote(days: &DayIndex, from_day: i32, to_day: i32) -> Quote {
+    let mut q = Quote::default();
+    for (_, models) in days.range(from_day..=to_day) {
+        for (model, charge) in models {
+            let Some((off, peak)) = rate_card(model) else {
+                q.unpriced.insert(if model.trim().is_empty() {
+                    UNLABELLED_MODEL.to_string()
+                } else {
+                    model.clone()
+                });
+                continue;
+            };
+            q.absorb(&charge.off, &off);
+            q.absorb(&charge.peak, &peak);
+        }
+    }
+    q.settle();
+    q
+}
+
+fn count_window(id: &str, label: &str, tokens: u64, cost: f64) -> LimitWindow {
     LimitWindow {
         id: id.into(),
         label: label.into(),
@@ -645,7 +869,30 @@ fn count_window(id: &str, label: &str, tokens: u64) -> LimitWindow {
         resets_at: None,
         count: Some(tokens as i64),
         unit: Some("tokens".into()),
+        cost: Some(cost),
         ..Default::default()
+    }
+}
+
+/// The money side of a reading: the widest span's breakdown, the rate card's terms, and whichever
+/// model was left out. Built from the same `Quote` the windows were, so the rows on the card and the
+/// figures beside them cannot drift apart.
+fn cost_estimate(q: &Quote) -> CostEstimate {
+    let mut unpriced: Vec<String> = q.unpriced.iter().cloned().collect();
+    unpriced.sort();
+    CostEstimate {
+        currency: "CNY".into(),
+        parts: vec![
+            CostPart { label: "Cache-hit input".into(), tokens: q.hit_tokens as i64, cost: q.hit_cost },
+            CostPart { label: "Cache-miss input".into(), tokens: q.miss_tokens as i64, cost: q.miss_cost },
+            CostPart { label: "Output".into(), tokens: q.output_tokens as i64, cost: q.output_cost },
+        ],
+        rate_note: "Estimated from this machine's transcripts and DeepSeek's published rates. \
+                    Weekday peak hours cost double."
+            .into(),
+        estimated: true,
+        window: "Last 30 days".into(),
+        unpriced,
     }
 }
 
@@ -660,6 +907,7 @@ fn read_once(prev: &UsageSnapshot, cache: &mut TotalsCache) -> UsageSnapshot {
     if file_count == 0 {
         snap.status = "none".into();
         snap.windows.clear();
+        snap.cost = None;
         snap.note = "No DeepSeek Harness session has run yet".into();
         return snap;
     }
@@ -668,20 +916,26 @@ fn read_once(prev: &UsageSnapshot, cache: &mut TotalsCache) -> UsageSnapshot {
     let today_tokens = total_between(&days, today, today);
     let week_tokens = total_between(&days, today - 6, today);
     let month_tokens = total_between(&days, today - 29, today);
+    let today_quote = quote(&days, today, today);
+    let week_quote = quote(&days, today - 6, today);
+    let month_quote = quote(&days, today - 29, today);
 
     snap.status = "ok".into();
     snap.fetched_at = now_ms();
     snap.note.clear();
     // "Today" is always present, so the ring always means the same thing; the wider windows only
     // appear once they have something in them.
-    let mut windows = vec![count_window("today", "Today", today_tokens)];
+    let mut windows = vec![count_window("today", "Today", today_tokens, today_quote.total)];
     if week_tokens > 0 {
-        windows.push(count_window("week", "Last 7 days", week_tokens));
+        windows.push(count_window("week", "Last 7 days", week_tokens, week_quote.total));
     }
     if month_tokens > 0 {
-        windows.push(count_window("month", "Last 30 days", month_tokens));
+        windows.push(count_window("month", "Last 30 days", month_tokens, month_quote.total));
     }
     snap.windows = windows;
+    // The breakdown is the widest span's, which is the one the card shows last and the only one whose
+    // rows still add up to something a person would want to read in full.
+    snap.cost = Some(cost_estimate(&month_quote));
     snap
 }
 
@@ -796,7 +1050,7 @@ mod tests {
             "time": time,
             "data": {
                 "usage": { "inputTokens": input, "outputTokens": output },
-                "message": { "id": message_id, "source": { "provider": "deepseek", "model": "deepseek-v4" } }
+                "message": { "id": message_id, "source": { "provider": "deepseek-official", "model": "deepseek-flash" } }
             }
         })
     }
@@ -809,11 +1063,78 @@ mod tests {
         *INIT.get_or_init(now_ms)
     }
 
+    /// The tokens a day holds, across every model and both pricing bands. A fold test asking "how
+    /// much did that day come to" is asking for exactly this sum.
+    fn day_total(days: &DayIndex, day: i32) -> u64 {
+        days.get(&day).map(|models| models.values().map(DayCharge::total).sum()).unwrap_or(0)
+    }
+
+    /// One model's tokens across the whole index, both bands. A fold test asserting about the *bands*
+    /// rather than about a day sums this way, which keeps it clear of the question of which local day
+    /// an instant lands on — that depends on the machine's timezone, and the band does not.
+    fn model_charge(days: &DayIndex, model: &str) -> DayCharge {
+        let mut total = DayCharge::default();
+        for models in days.values() {
+            if let Some(charge) = models.get(model) {
+                total.merge(charge);
+            }
+        }
+        total
+    }
+
+    /// A day index carrying one model's miss tokens, for the tests that only care which days a span
+    /// covers. Priced under `deepseek-flash`, the model this build's transcripts actually name.
+    fn days_of(entries: &[(i32, u64)]) -> DayIndex {
+        entries
+            .iter()
+            .map(|(day, tokens)| {
+                let charge =
+                    DayCharge { off: Charge { miss: *tokens, ..Default::default() }, ..Default::default() };
+                (*day, BTreeMap::from([("deepseek-flash".to_string(), charge)]))
+            })
+            .collect()
+    }
+
+    /// A one-day index over the given models, so a pricing test can name its models inline.
+    fn quote_of(models: &[(&str, DayCharge)]) -> Quote {
+        let day: BTreeMap<String, DayCharge> =
+            models.iter().map(|(m, c)| ((*m).to_string(), *c)).collect();
+        let index = BTreeMap::from([(local_day(t()), day)]);
+        quote(&index, local_day(t()), local_day(t()))
+    }
+
+    /// Epoch ms for a Beijing wall-clock instant, so the peak-hour tests read as the vendor's own
+    /// words instead of as arithmetic on a UTC offset.
+    fn beijing_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> u64 {
+        use chrono::{NaiveDate, TimeZone, Utc};
+        let naive = NaiveDate::from_ymd_opt(year, month, day)
+            .and_then(|d| d.and_hms_opt(hour, minute, 0))
+            .expect("a real calendar instant");
+        (Utc.from_utc_datetime(&naive).timestamp_millis() - BEIJING_OFFSET_SECS * 1000) as u64
+    }
+
+    /// A Beijing wall-clock instant on the most recent weekday at or before now.
+    ///
+    /// A test that needs its records to *survive the fold* cannot name a calendar date: it would read
+    /// correctly the day it was written and, once that day fell outside the keep window, be asserting
+    /// about a day the reader was right to have discarded. Anchoring to the same frozen "now" the fold
+    /// measures against keeps the two in step for as long as the suite lives.
+    fn recent_weekday_ms(hour: u32, minute: u32) -> u64 {
+        let now_secs = (t() / 1000) as i64 + BEIJING_OFFSET_SECS;
+        let mut day = now_secs.div_euclid(86_400);
+        // 1970-01-01 was a Thursday, so shifting by 3 makes 0 mean Monday.
+        while (day + 3).rem_euclid(7) >= 5 {
+            day -= 1;
+        }
+        let secs = day * 86_400 + hour as i64 * 3600 + minute as i64 * 60;
+        ((secs - BEIJING_OFFSET_SECS) * 1000) as u64
+    }
+
     #[test]
     fn a_reply_contributes_its_tokens_to_the_day_it_happened() {
         let text = vec![header(serde_json::json!({})), line(reply(1, t(), "m-1", 100, 40))].join("\n");
         let days = fold_transcript(&text);
-        assert_eq!(days.get(&local_day(t())), Some(&140));
+        assert_eq!(day_total(&days, local_day(t())), 140);
         assert_eq!(days.len(), 1);
     }
 
@@ -828,7 +1149,7 @@ mod tests {
             "data": { "usage": { "inputTokens": 10, "outputTokens": 50, "reasoningTokens": 30 } }
         });
         let text = vec![header(serde_json::json!({})), line(record)].join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&60));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 60);
     }
 
     #[test]
@@ -842,7 +1163,7 @@ mod tests {
             } }
         });
         let text = vec![header(serde_json::json!({})), line(record)].join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 10);
     }
 
     /// The writer can re-append a line it already flushed; that is not a second charge.
@@ -855,7 +1176,7 @@ mod tests {
             line(duplicate),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&140));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 140);
     }
 
     /// A forked session's log opens with a copy of its parent's events; those are the parent's. The
@@ -870,7 +1191,7 @@ mod tests {
             line(reply(3, t(), "child-1", 7, 3)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 10);
     }
 
     /// The cut is exclusive — the event whose seq equals it is the child's own and is charged, and
@@ -885,7 +1206,7 @@ mod tests {
             line(reply(3, t(), "child-1", 7, 3)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&150));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 150);
     }
 
     #[test]
@@ -899,7 +1220,7 @@ mod tests {
             line(reply(3, t(), "child-1", 7, 3)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&10));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 10);
     }
 
     /// An untagged end-seed is this log stating that nothing was inherited. It is not a cut, so the
@@ -914,7 +1235,7 @@ mod tests {
             })),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&140));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 140);
     }
 
     /// A seeded header whose log never says where the copy ended cannot say what it owns, so it
@@ -941,7 +1262,7 @@ mod tests {
             ] }
         });
         let text = vec![header(serde_json::json!({})), line(record)].join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&11));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 11);
     }
 
     #[test]
@@ -962,7 +1283,7 @@ mod tests {
             &line(reply(2, t(), "m-1", 1, 1)),
         ]
         .join("\n");
-        assert_eq!(fold_transcript(&text).get(&local_day(t())), Some(&2));
+        assert_eq!(day_total(&fold_transcript(&text), local_day(t())), 2);
     }
 
     #[test]
@@ -980,10 +1301,7 @@ mod tests {
 
     #[test]
     fn a_day_range_is_inclusive_at_both_ends() {
-        let mut days: BTreeMap<i32, u64> = BTreeMap::new();
-        days.insert(100, 1);
-        days.insert(101, 2);
-        days.insert(102, 4);
+        let days = days_of(&[(100, 1), (101, 2), (102, 4)]);
         assert_eq!(total_between(&days, 101, 102), 6);
         assert_eq!(total_between(&days, 100, 100), 1);
         assert_eq!(total_between(&days, 103, 104), 0);
@@ -1057,7 +1375,7 @@ mod tests {
     /// The other half of the rule: what this reader wrote is reused as it stands.
     #[test]
     fn a_cache_written_by_this_reader_is_kept() {
-        let entry = FileTotals { size: 9, mtime_ms: 8, days: BTreeMap::from([(7, 6)]) };
+        let entry = FileTotals { size: 9, mtime_ms: 8, days: days_of(&[(7, 6)]) };
         let current =
             TotalsCache { schema: CACHE_SCHEMA, files: HashMap::from([("k".to_string(), entry)]) };
         assert_eq!(usable(current).files.len(), 1);
@@ -1070,5 +1388,128 @@ mod tests {
         assert!(scan_zstd_frames(&frame).is_empty());
         let not_a_magic = [0x00, 0x00, 0x00, 0x00];
         assert!(scan_zstd_frames(&not_a_magic).is_empty());
+    }
+
+    // ---------------- what the tokens cost ----------------
+
+    /// The vendor's peak windows, in Beijing time. 2026-09-28 is a Monday.
+    #[test]
+    fn peak_hours_are_the_vendors_own_weekday_windows() {
+        let monday = |h, m| beijing_ms(2026, 9, 28, h, m);
+        assert!(is_peak(monday(10, 30)), "10:30 on a Monday is inside the morning window");
+        assert!(is_peak(monday(14, 0)), "14:00 opens the afternoon window");
+        assert!(!is_peak(monday(8, 59)), "08:59 is before the morning window");
+        assert!(!is_peak(monday(12, 0)), "12:00 ends the morning window");
+        assert!(!is_peak(monday(13, 0)), "13:00 is the lunch gap");
+        assert!(!is_peak(monday(18, 0)), "18:00 closes the afternoon window");
+        // The weekend half of the rule, which a weekday-only implementation gets wrong.
+        assert!(!is_peak(beijing_ms(2026, 9, 27, 10, 0)), "Sunday 10:00");
+        assert!(!is_peak(beijing_ms(2026, 10, 3, 15, 0)), "Saturday 15:00");
+        // And a weekday outside the windows is not peak either.
+        assert!(!is_peak(beijing_ms(2026, 9, 25, 22, 0)), "Friday 22:00");
+    }
+
+    /// The arithmetic the card shows, checked against figures written out longhand rather than
+    /// against the code's own helpers: 1M of each kind, off-peak Flash = 0.02 + 1.00 + 4.00.
+    #[test]
+    fn spend_is_the_rate_card_applied_to_each_kind_of_token() {
+        let charge = Charge { hit: 1_000_000, miss: 1_000_000, write: 0, output: 1_000_000 };
+        let q = quote_of(&[("deepseek-flash", DayCharge { off: charge, ..Default::default() })]);
+        assert!((q.total - 5.02).abs() < 1e-9, "total was {}", q.total);
+        assert_eq!(q.hit_tokens, 1_000_000);
+        assert!((q.hit_cost - 0.02).abs() < 1e-9, "hit was {}", q.hit_cost);
+        assert!((q.miss_cost - 1.0).abs() < 1e-9, "miss was {}", q.miss_cost);
+        assert!((q.output_cost - 4.0).abs() < 1e-9, "output was {}", q.output_cost);
+    }
+
+    /// Peak hours cost double, and the band a charge belongs to has to survive the fold — otherwise
+    /// the doubling could never be applied to anything.
+    #[test]
+    fn the_peak_band_costs_double_and_survives_the_fold() {
+        let charge = Charge { hit: 0, miss: 1_000_000, write: 0, output: 0 };
+        let off = quote_of(&[("deepseek-flash", DayCharge { off: charge, ..Default::default() })]);
+        let peak = quote_of(&[("deepseek-flash", DayCharge { peak: charge, ..Default::default() })]);
+        assert!((off.total - 1.0).abs() < 1e-9, "off-peak was {}", off.total);
+        assert!((peak.total - 2.0).abs() < 1e-9, "peak was {}", peak.total);
+
+        // The same two instants through the real fold: 10:00 is inside the morning window, 20:00 the
+        // same weekday is outside both. Anchored to now rather than to a calendar date, because the
+        // fold discards anything past the keep window and a named date would quietly stop being read.
+        let morning = recent_weekday_ms(10, 0);
+        let evening = recent_weekday_ms(20, 0);
+        let text = vec![
+            header(serde_json::json!({})),
+            line(reply(1, morning, "m-1", 100, 0)),
+            line(reply(2, evening, "m-2", 200, 0)),
+        ]
+        .join("\n");
+        let days = fold_transcript(&text);
+        let model = model_charge(&days, "deepseek-flash");
+        assert_eq!(model.peak.miss, 100, "the morning charge is a peak one");
+        assert_eq!(model.off.miss, 200, "the evening charge is an off-peak one");
+        assert_eq!(model.total(), 300, "and both are still counted");
+    }
+
+    /// A model this build has no rate for costs nothing and is named, rather than being priced off
+    /// another model's card and reported as if the vendor had said so.
+    #[test]
+    fn an_unpriced_model_is_named_rather_than_guessed_at() {
+        let charge = Charge { hit: 0, miss: 1_000_000, write: 0, output: 0 };
+        let q = quote_of(&[("some-new-model", DayCharge { off: charge, ..Default::default() })]);
+        assert_eq!(q.total, 0.0);
+        assert_eq!(q.unpriced.len(), 1);
+        assert!(q.unpriced.contains("some-new-model"));
+    }
+
+    /// A transcript naming no model at all still shows up as something a person can read.
+    #[test]
+    fn an_unlabelled_model_is_still_named() {
+        let charge = Charge { hit: 0, miss: 1_000_000, write: 0, output: 0 };
+        let q = quote_of(&[("", DayCharge { off: charge, ..Default::default() })]);
+        assert_eq!(q.unpriced.len(), 1);
+        assert!(q.unpriced.contains(UNLABELLED_MODEL));
+    }
+
+    /// The Pro card is a different row of the same table, not a multiple of the Flash one.
+    #[test]
+    fn the_pro_card_is_priced_off_its_own_row() {
+        let charge = Charge { hit: 0, miss: 0, write: 0, output: 1_000_000 };
+        let q = quote_of(&[("deepseek-v4-pro", DayCharge { off: charge, ..Default::default() })]);
+        assert!((q.total - 13.5).abs() < 1e-9, "total was {}", q.total);
+    }
+
+    /// The vendor's own retired aliases are billed as Flash, so they must be priced and not dropped.
+    #[test]
+    fn the_retired_flash_aliases_share_the_flash_card() {
+        assert_eq!(rate_card("deepseek-flash"), rate_card("deepseek-v4-flash"));
+        assert!(rate_card("deepseek-v4-flash-vision-exp").is_some());
+        assert!(rate_card("deepseek-v4-pro").is_some());
+        assert!(rate_card("gpt-5").is_none());
+        assert!(rate_card("").is_none());
+    }
+
+    /// Only the parts are ever summed into the total, so a caller cannot report a figure that
+    /// disagrees with the rows printed under it.
+    #[test]
+    fn the_total_is_the_sum_of_the_parts() {
+        let charge = Charge { hit: 7, miss: 11, write: 13, output: 17 };
+        let q = quote_of(&[("deepseek-flash", DayCharge { off: charge, ..Default::default() })]);
+        assert!((q.total - (q.hit_cost + q.miss_cost + q.output_cost)).abs() < 1e-12);
+        // A cache write rides with the misses: the vendor bills that token once, at the miss rate.
+        assert_eq!(q.miss_tokens, 24);
+    }
+
+    /// The estimate the card prints is built from the quote, so the note and the rows agree.
+    #[test]
+    fn the_cost_estimate_carries_the_quote_it_was_built_from() {
+        let charge = Charge { hit: 1_000_000, miss: 0, write: 0, output: 0 };
+        let q = quote_of(&[("deepseek-flash", DayCharge { off: charge, ..Default::default() })]);
+        let estimate = cost_estimate(&q);
+        assert_eq!(estimate.currency, "CNY");
+        assert!(estimate.estimated, "a rate-card figure is never a bill");
+        assert_eq!(estimate.parts.len(), 3);
+        assert_eq!(estimate.parts[0].tokens, 1_000_000);
+        assert!((estimate.parts[0].cost - 0.02).abs() < 1e-9);
+        assert!(estimate.unpriced.is_empty());
     }
 }

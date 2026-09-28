@@ -81,6 +81,13 @@ const AUTH_FILE_MAX_BYTES: u64 = 1024 * 1024;
 const EXPIRY_SKEW_MS: u64 = 30 * 1000;
 /// The marker the app puts on a field it sealed with its own runtime's key.
 const ENCRYPTED_FIELD_MARKER: &str = "$wbEncrypted";
+/// What the card says when a credential the user pasted is refused.
+///
+/// One string rather than two, because the card has one line for it and both routes into this state —
+/// the billing request answering 401, and the balance simply being missing — call for the same advice:
+/// a fresh token. Sending someone whose paste was refused to the app's sign-in screen would point at
+/// a screen that cannot help while a stale credential file sits in the way.
+const PASTED_REFUSED: &str = "WorkBuddy refused the pasted credential — paste a fresh one in Settings";
 
 static REFRESH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -159,12 +166,127 @@ fn logout_marker_in(dir: &Path) -> PathBuf {
     dir.join(format!("{AUTH_FILE_NAME}{LOGOUT_MARKER_SUFFIX}"))
 }
 
+// ---------------- a credential the user pasted in ----------------
+
+/// The credential file lives beside the config. It exists for the one case the reader cannot solve on
+/// its own: WorkBuddy 5.6.0 and later seal `auth.accessToken` with a key only their own runtime
+/// holds, so the installed app's session is unreadable to everybody else. Reading the balance then
+/// leaves exactly two options — ask the person for their token, or attack the envelope — and only the
+/// first is this program's business.
+///
+/// Its own file rather than a field in `config.json`: that document is rewritten wholesale by the
+/// settings window and handed back to the page, and a credential should not be anywhere near it.
+fn credential_path() -> PathBuf {
+    crate::config::config_path().with_file_name("workbuddy-credential.json")
+}
+
+/// What the user pasted. Only the token is required — everything else is used when it is there. The
+/// enterprise id is the one field that changes the request, since it selects the endpoint.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ManualCredential {
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default)]
+    pub enterprise_id: String,
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub account_type: String,
+}
+
+/// The pasted credential, if one is stored and usable. A file with a blank token counts as none, so
+/// "saved" and "will be sent" can never disagree.
+pub fn read_credential() -> Option<ManualCredential> {
+    let text = std::fs::read_to_string(credential_path()).ok()?;
+    let credential = serde_json::from_str::<ManualCredential>(&text).ok()?;
+    if credential.access_token.trim().is_empty() {
+        return None;
+    }
+    Some(credential)
+}
+
+pub fn credential_saved() -> bool {
+    read_credential().is_some()
+}
+
+/// The token as it should be stored, or `None` when there is nothing to store.
+///
+/// A pasted token usually arrives the way it was copied out of a browser's network panel, scheme and
+/// all. Cleaning it here rather than refusing it matters: refusing would send the user back to copy
+/// the same string again with no idea which part was wrong.
+fn normalized_token(raw: &str) -> Option<String> {
+    let token = raw.trim().trim_start_matches("Bearer ").trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+/// Writes the credential, and nothing else. Returns the state that was actually stored so the caller
+/// reports what happened rather than what it asked for.
+pub fn save_credential(access_token: &str, enterprise_id: &str, user_id: &str) -> Result<(), String> {
+    let Some(token) = normalized_token(access_token) else {
+        return Err("the credential is empty".into());
+    };
+    let credential = ManualCredential {
+        access_token: token,
+        enterprise_id: enterprise_id.trim().to_string(),
+        user_id: user_id.trim().to_string(),
+        account_type: if enterprise_id.trim().is_empty() { "personal".into() } else { "enterprise".into() },
+    };
+    let text = serde_json::to_string_pretty(&credential).map_err(|e| e.to_string())?;
+    std::fs::write(credential_path(), text).map_err(|e| e.to_string())?;
+    request_refresh();
+    Ok(())
+}
+
+/// Removes the file. A missing file is success: the point is the state afterwards, not who made it.
+pub fn forget_credential() -> Result<(), String> {
+    match std::fs::remove_file(credential_path()) {
+        Ok(()) => {
+            request_refresh();
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            request_refresh();
+            Ok(())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The same session shape the app's own file produces, built from what was pasted.
+///
+/// `expires_at` is zero — "no stated expiry" — because a pasted token says nothing about when it
+/// lapses and the sealed file cannot be consulted for it. The request itself is then the test: a
+/// token that has aged out answers 401 and the card asks for a fresh one.
+fn session_from_credential(credential: &ManualCredential) -> Session {
+    Session {
+        token: normalized_token(&credential.access_token).unwrap_or_default(),
+        user_id: credential.user_id.trim().to_string(),
+        enterprise_id: credential.enterprise_id.trim().to_string(),
+        department_info: String::new(),
+        domain: String::new(),
+        account_type: if credential.account_type.trim().is_empty() {
+            "personal".to_string()
+        } else {
+            credential.account_type.trim().to_string()
+        },
+        expires_at: 0,
+    }
+}
+
 /// Whether the installed app left canonical state here at all, or — since the transcripts outlive a
 /// sealed credential — whether there is any session history to total. Used to tell "WorkBuddy is not
 /// on this machine" (no cell at all) from "WorkBuddy is here and signed out" (a cell asking to sign
 /// in).
+///
+/// A pasted credential counts as present on its own: someone who pasted a token wants the cell even
+/// if the desktop app is not installed here — the token works against the same API from anywhere.
 pub fn present() -> bool {
-    auth_dirs().iter().any(|d| auth_file_in(d).is_file() || logout_marker_in(d).exists())
+    credential_saved()
+        || auth_dirs().iter().any(|d| auth_file_in(d).is_file() || logout_marker_in(d).exists())
         || workbuddy_tokens::present()
 }
 
@@ -317,6 +439,16 @@ pub fn read_session(now: u64) -> (Option<Session>, Option<ReadReason>) {
 
 /// For doctor: a report that never contains a credential value.
 pub fn probe() -> String {
+    // Checked before the directories: a pasted credential works whether or not the desktop app is
+    // installed here, so the report has to lead with which credential is actually in use.
+    if let Some(credential) = read_credential() {
+        return format!(
+            "WorkBuddy: pasted credential in use (token {} chars, {}{})",
+            credential.access_token.trim().len(),
+            if credential.enterprise_id.trim().is_empty() { "personal" } else { "enterprise" },
+            if credential.user_id.trim().is_empty() { "" } else { ", user id set" }
+        );
+    }
     let dirs = auth_dirs();
     let Some(first) = dirs.first() else {
         return "WorkBuddy: no home directory to look under".into();
@@ -606,15 +738,22 @@ fn fetch_once(session: &Session) -> Result<serde_json::Value, FetchErr> {
 
 /// The one window the ring draws. A personal account names no reset: each package expires on its
 /// own day, so there is no single instant to print and none is invented.
+///
+/// The absolute remainder rides along with the fraction. A ring at 13.5% is the same picture whether
+/// the account holds 173,000 credits or 1,730,000, and "how much is left" is the question the cell
+/// exists to answer — so the number the vendor did publish is carried through instead of being
+/// thrown away by the percentage.
 fn window_of(reading: &Reading) -> Option<LimitWindow> {
     match reading {
-        Reading::Metered { used, limit, resets_at, .. } => {
+        Reading::Metered { used, limit, remaining, resets_at } => {
             let fraction = if *limit > 0.0 { (used / limit).clamp(0.0, 1.0) } else { 0.0 };
             Some(LimitWindow {
                 id: "credits".into(),
                 label: "Credits".into(),
                 used: fraction,
                 resets_at: *resets_at,
+                remaining: Some(*remaining),
+                unit: Some("credits".into()),
                 ..Default::default()
             })
         }
@@ -652,6 +791,10 @@ fn local_fallback(
         fetched_at: now,
         note,
         backoff_until: 0,
+        // Local token counts, not credits: nothing here is priced, so the card is given no money to
+        // print. Inventing one from a rate card that does not exist for this product would be worse
+        // than the empty space.
+        cost: None,
     })
 }
 
@@ -665,10 +808,29 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
     save_tokens_cache(tokens);
     let local = workbuddy_tokens::windows(&days, now);
 
-    let (session, reason) = read_session(now);
+    // A credential the user pasted outranks the app's own file, and for the reason the file exists at
+    // all: when the app sealed its copy, that file can never answer, and someone who pasted a token
+    // did it precisely so this reader would use it.
+    let pasted = read_credential();
+    let from_paste = pasted.is_some();
+    let (session, reason) = match pasted.as_ref() {
+        Some(credential) => (Some(session_from_credential(credential)), None),
+        None => read_session(now),
+    };
+    // What to say when the balance is missing. A refused pasted token is not a signed-out app: the
+    // remedy is a fresh token in Settings, and pointing at the app's sign-in screen would send the
+    // user somewhere that cannot change the outcome.
+    let missing = |reason: Option<ReadReason>| -> String {
+        if from_paste {
+            PASTED_REFUSED.into()
+        } else {
+            quota_missing_note(reason)
+        }
+    };
+
     let Some(session) = session else {
         let reason = reason.unwrap_or(ReadReason::Absent);
-        if let Some(s) = local_fallback(&local, files, now, quota_missing_note(Some(reason))) {
+        if let Some(s) = local_fallback(&local, files, now, missing(Some(reason))) {
             return s;
         }
         match reason {
@@ -686,7 +848,7 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
         return snap;
     };
     if session.expired(now) {
-        if let Some(s) = local_fallback(&local, files, now, quota_missing_note(Some(ReadReason::Expired))) {
+        if let Some(s) = local_fallback(&local, files, now, missing(Some(ReadReason::Expired))) {
             return s;
         }
         snap.status = if snap.windows.is_empty() { "needsAuth" } else { "stale" }.into();
@@ -735,13 +897,15 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
             }
         }
         Err(FetchErr::NeedsAuth) => {
-            if let Some(s) =
-                local_fallback(&local, files, now, quota_missing_note(Some(ReadReason::Expired)))
-            {
+            if let Some(s) = local_fallback(&local, files, now, missing(Some(ReadReason::Expired))) {
                 return s;
             }
             snap.status = "needsAuth".into();
-            snap.note = "WorkBuddy rejected the session — sign in again in the app".into();
+            snap.note = if from_paste {
+                PASTED_REFUSED.into()
+            } else {
+                "WorkBuddy rejected the session — sign in again in the app".into()
+            };
         }
         Err(FetchErr::Unavailable(msg)) => {
             if let Some(s) = local_fallback(&local, files, now, msg.clone()) {
@@ -1003,5 +1167,71 @@ mod tests {
     fn the_package_window_is_written_the_way_the_request_asks_for_it() {
         assert_eq!(format_local(0).len(), 19, "YYYY-MM-DD HH:MM:SS");
         assert!(format_local(0).contains(' '));
+    }
+
+    // ---------------- a credential the user pasted in ----------------
+
+    /// A pasted token usually arrives the way it was copied out of a network panel. It is cleaned
+    /// rather than refused, because refusing sends the user back to copy the same string again with
+    /// no idea which part was wrong.
+    #[test]
+    fn a_pasted_token_is_cleaned_of_its_scheme_and_its_spacing() {
+        assert_eq!(normalized_token("  Bearer abc123  ").as_deref(), Some("abc123"));
+        assert_eq!(normalized_token("abc123").as_deref(), Some("abc123"));
+        assert_eq!(normalized_token("   "), None);
+        assert_eq!(normalized_token("Bearer "), None);
+        assert_eq!(normalized_token(""), None);
+    }
+
+    /// A pasted credential builds the same session shape the app's own file does, minus the expiry it
+    /// cannot know — and "no stated expiry" must not read as "expired", or the balance would never be
+    /// requested at all.
+    #[test]
+    fn a_pasted_credential_names_no_expiry_and_is_usable() {
+        let credential = ManualCredential {
+            access_token: "  Bearer tok-1 ".into(),
+            user_id: "u-1".into(),
+            enterprise_id: String::new(),
+            account_type: String::new(),
+        };
+        let session = session_from_credential(&credential);
+        assert_eq!(session.token, "tok-1");
+        assert_eq!(session.user_id, "u-1");
+        assert_eq!(session.account_type, "personal");
+        assert_eq!(session.expires_at, 0);
+        assert!(!session.expired(NOW), "a token with no stated expiry is not expired");
+    }
+
+    /// The enterprise id is the field that selects the endpoint, so it has to survive the paste.
+    #[test]
+    fn an_enterprise_credential_keeps_its_id() {
+        let credential = ManualCredential {
+            access_token: "tok".into(),
+            enterprise_id: " ent-9 ".into(),
+            user_id: String::new(),
+            account_type: "enterprise".into(),
+        };
+        let session = session_from_credential(&credential);
+        assert_eq!(session.enterprise_id, "ent-9");
+        assert_eq!(session.account_type, "enterprise");
+    }
+
+    /// The percentage is not the answer to "how much is left". The absolute remainder has to reach
+    /// the window, and be named, or the card cannot print it.
+    #[test]
+    fn the_credits_window_carries_the_absolute_remainder() {
+        let reading =
+            Reading::Metered { used: 27_000.0, limit: 200_000.0, remaining: 173_000.0, resets_at: None };
+        let window = window_of(&reading).expect("a metered reading draws a window");
+        assert_eq!(window.id, "credits");
+        assert!((window.used - 0.135).abs() < 1e-9, "the proportion is still the proportion");
+        assert_eq!(window.remaining, Some(173_000.0));
+        assert_eq!(window.unit.as_deref(), Some("credits"));
+    }
+
+    /// An unmetered plan has no remainder to report, and so no window to report it on.
+    #[test]
+    fn an_unmetered_plan_draws_no_window() {
+        assert!(window_of(&Reading::Unmetered("unlimited".into())).is_none());
     }
 }

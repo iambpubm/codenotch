@@ -26,7 +26,7 @@ function markedSource(document, name) {
 }
 const context = vm.createContext({ textCopy: (s) => s }); // the page's wording lookup, as the identity
 vm.runInContext(markedSource(html, 'COUNT FORMAT'), context);
-const { compactCount, thousands, countCopy } = context;
+const { compactCount, thousands, countCopy, money } = context;
 const pill = (n) => '~' + compactCount(n);
 
 test('Counts below a thousand are printed whole', () => {
@@ -95,4 +95,32 @@ test('The tidied reading still fits the pill it is printed in', () => {
   const needed = widest * size * 0.62;
   assert.ok(needed < body,
     `widest reading is ${widest} chars (${needed.toFixed(0)}px) but the pill body is ${body}px`);
+});
+
+test('A spend figure keeps the precision the amount is worth', () => {
+  // Cents are the point for this provider: a month of cache-heavy DeepSeek work comes to a fraction of
+  // a yuan, and rounding that to two places would print "¥0.00" — which reads as free rather than as
+  // cheap. Under a cent, a third decimal is the difference between a figure and a zero.
+  assert.equal(money(0, 'CNY'), '¥0');
+  assert.equal(money(0.401516, 'CNY'), '¥0.40');
+  assert.equal(money(0.008, 'CNY'), '¥0.008');
+  assert.equal(money(0.0009, 'CNY'), '¥0.001');
+  assert.equal(money(5.02, 'CNY'), '¥5.02');
+  assert.equal(money(12.3456, 'CNY'), '¥12.35');
+});
+
+test('A spend figure says which currency the rate card was published in', () => {
+  assert.equal(money(1.5, 'USD'), '$1.50');
+  // An unqualified amount is a yuan figure: that is the currency DeepSeek publishes in, and the one
+  // the card is built for. A missing code must not turn the figure into an empty string.
+  assert.equal(money(1.5, ''), '¥1.50');
+  assert.equal(money(1.5, undefined), '¥1.50');
+});
+
+test('No amount prints as a figure it is not', () => {
+  // A window with no cost on it must be silent rather than show a zero, or every unpriced provider
+  // would grow a "¥0" that says nothing.
+  assert.equal(money(NaN, 'CNY'), '');
+  assert.equal(money(undefined, 'CNY'), '');
+  assert.equal(money(null, 'CNY'), '¥0');
 });

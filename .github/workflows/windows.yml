@@ -48,6 +48,13 @@ jobs:
       - name: Test the pill reading width
         run: node --test test-count-format.cjs
 
+      # Both pages translate by lookup, and a missed key falls back to English silently rather than
+      # throwing — which is right at runtime and means a half-translated card is never reported by
+      # anything. The balance line is worse than silent: it calls into the language table, so a table
+      # without `leftOf` throws the moment a WorkBuddy card with a remainder is opened.
+      - name: Test card money and credit coverage
+        run: node --test test-card-i18n-coverage.cjs
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

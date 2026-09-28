@@ -75,8 +75,10 @@ recovery runs only after HTTP failure, directly owns a native executable, and
 does not use `taskkill` or launch a Node/cmd tree. Codenotch sends no login or
 explicit token-refresh request; Codex may perform its own normal managed refresh.
 
-Regression checks: `cargo test --locked` and `node --test test-codex-headline.cjs`
-from `windows/`. Tests use synthetic quota fixtures, not account credentials.
+Regression checks: `cargo test --locked` from `windows/codenotch/`, plus `node --test`
+on each of `test-codex-headline.cjs`, `test-count-format.cjs`, `test-light-surface.cjs`,
+`test-card-i18n-coverage.cjs` and `scripts/test-ko-i18n.cjs` from `windows/`. Tests use
+synthetic quota fixtures, not account credentials.
 The optional `cargo test --release --locked codex::tests::live_native_quota -- --ignored`
 checks the actual native transport against an already signed-in local client;
 it prints no account credentials or quota values and is not run by CI.
@@ -101,6 +103,31 @@ planes WorkBuddy is read through. The other is the app's own session transcripts
 totalled locally as tokens for today, the last seven days and the last thirty. They
 need no credential at all, so a sealed session loses you the balance and nothing
 else: the token windows lead the ring and the cell says why the balance is missing.
+
+#### Reading the balance back, by hand
+
+`Unreadable` is a real dead end rather than a prompt: the seal is symmetric and the key
+never leaves the WorkBuddy process, so no amount of reading the file will open it. The
+way through is to hand Codenotch a credential once. Turn WorkBuddy's cell on in
+**Settings → Accounts** and a small row appears under it — paste the `Authorization`
+value from the app's own developer tools (the network tab of a `copilot.tencent.com`
+call), save, and the balance fills in. The token windows lead the ring either way, so
+the cell is useful before and after.
+
+- The credential is written to `%APPDATA%\codenotch\workbuddy-credential.json`, in your
+  own profile, and is sent to nothing but `copilot.tencent.com`. The enterprise and user
+  ids are optional; supply them when the session is an enterprise one.
+- `Bearer ` and surrounding whitespace are stripped, so pasting either the whole header
+  value or just the token works.
+- A pasted credential is treated as having no declared expiry: it is used until the
+  endpoint refuses it, and then the cell says the credential was refused and to paste a
+  fresh one — it will not tell you to sign in again, which was the thing that could not
+  help.
+- Typing it in is the only way in. There is no import from the sealed file, no
+  clipboard sniffing, and **Remove** deletes the file outright.
+- A pasted credential outranks the app's own session file. If the balance still will not
+  read, the credential is the one being refused, and the old session is not quietly
+  consulted behind your back.
 
 The counts are the tokens WorkBuddy actually had to process — per call,
 `(input − cached input) + output`. `input` is the whole context that call re-sent, so
@@ -150,6 +177,51 @@ Four details of the format change the number, so they are worth stating:
 A transcript the writer is midway through looks truncated, and that is normal: the harness
 appends one Zstandard frame per flush, so frame boundaries are located without decompressing
 the file and only the half-written frame at the cut is dropped.
+
+#### What those tokens came to
+
+DeepSeek publishes no usage or billing endpoint — its API reference offers `GET /user/balance`
+and `GET /models` and nothing else — so there is no way to ask what a month cost, and nothing to
+sign into. The figure on the card is therefore **our own estimate, and says so**: the tokens
+already counted above, multiplied by DeepSeek's published rate card, converted to CNY. The
+30-day total appears in full under the count rows on the hover card, broken into cache-hit
+input, cache-miss input and output, with the three token counts beside their own share.
+
+The rate card is read from the vendor's *Models & Pricing* page and comes in four rows, in CNY
+per million tokens:
+
+| Model | | Cache hit | Cache miss | Output |
+|---|---|---|---|---|
+| Flash | off-peak | 0.02 | 1.00 | 4.00 |
+| Flash | peak | 0.04 | 2.00 | 8.00 |
+| Pro | off-peak | 0.15 | 4.50 | 13.50 |
+| Pro | peak | 0.30 | 9.00 | 27.00 |
+
+- **The three rates are never blended.** The vendor charges fifty times more for a cache-miss
+  input token than a cache-hit one and four times more again for an output token, so a single
+  average rate would be wrong for every session — too high for a well-cached one, too low for a
+  cold one. Each kind of token is priced on its own row and the shares are added.
+- **Peak is decided per event, not per day.** Peak is Beijing time, Monday to Friday,
+  09:00–12:00 and 14:00–18:00; every other hour is off-peak at half price. A day's tokens
+  therefore cannot be summed first and priced once — the fold splits each day's usage into a
+  peak and an off-peak charge as it goes.
+- **Public holidays are read as ordinary weekdays**, because which days are holidays is
+  published afresh each year and a table baked into this build is guaranteed to expire. The
+  error is one-directional: a holiday read as a peak weekday overstates that day's cost, and
+  never understates it. Overstating is the safe direction for an estimate.
+- **An unpriced model is named, not guessed at.** A model with no rate card here is dropped
+  from every amount — never priced off a sibling's card, which would produce a number that looks
+  authoritative and is not the one the vendor would bill — and the card lists it under
+  *Not priced:* so the omission is visible rather than silent. The retired aliases
+  `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are served as Flash and billed at Flash
+  rates, so they share its card; a record with no model name at all is reported as
+  `(unlabelled)`.
+- The estimate covers the last 30 days, matching the window named on the row above it, and is
+  flagged `estimated` all the way through to the card.
+
+For reference, this machine's own 30 days — about 3.57 M tokens at a 95 % cache-hit rate —
+comes to roughly **¥0.4**. A cache-hit-heavy session run during off-peak hours is cheap; a cold
+one at peak prices is not.
 
 ### Antigravity
 

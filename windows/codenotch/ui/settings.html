@@ -91,6 +91,19 @@
   .acct.off .glyph{opacity:.5}
   .acct-detail{margin:4px 0 0 26px;font-size:12px;color:var(--text2)}
   .acct-sub{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 0 26px;font-size:13px}
+  /* The pasted-credential block: fields stacked under the provider they belong to, indented to the
+     same 26 px the switch's label starts on so it reads as part of that provider's row rather than as
+     a separate section. */
+  .acct-col{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:8px 0 0 26px}
+  .acct-col > span{font-size:13px}
+  .cred{width:100%;box-sizing:border-box;padding:5px 8px;border-radius:7px;border:1px solid var(--seg-bg);background:var(--seg-bg);color:var(--text);font:inherit;font-size:12px}
+  .cred:focus{outline:none;border-color:var(--accent)}
+  .acct-actions{display:flex;gap:8px}
+  .mini{padding:4px 12px;border-radius:7px;border:1px solid var(--seg-bg);background:var(--seg-bg);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+  .mini:hover{border-color:var(--accent)}
+  .mini.ghost{background:transparent}
+  /* Not .acct-detail: that one carries its own 26 px indent, which would stack on top of the block's. */
+  .acct-note{font-size:12px;color:var(--text2)}
   .glyph{width:16px;height:16px;display:inline-grid;place-items:center;flex:none;color:var(--text)}
   .glyph svg{width:16px;height:16px;fill:currentColor}
   .glyph img{width:16px;height:16px;border-radius:4px;display:block}
@@ -246,6 +259,13 @@ function esc(s){
    Windows page keep the Russian #141 gave them. `applyStaticUi()` matches a text node exactly, so
    rewording any string here means changing its key in every table. */
 const PT_BR_STATIC = {
+  'WorkBuddy credential':'Credencial do WorkBuddy',
+  'Paste the accessToken value':'Cole o valor do accessToken',
+  'Enterprise id (optional)':'ID da empresa (opcional)',
+  'Save':'Guardar',
+  'Remove':'Remover',
+  'Credential saved — the balance is read with it':'Credencial guardada — o saldo é lido com ela',
+  'Paste a credential to read the Credits balance':'Cole uma credencial para ler o saldo de créditos',
   'Colour transition':'Transição de cor',
   'Hard step':'Degrau seco',
   'Colour ramp':'Rampa de cor',
@@ -349,6 +369,13 @@ const PT_BR_STATIC = {
   'Saved':'Salvo'
 };
 const RU_STATIC = {
+  'WorkBuddy credential':'Учётные данные WorkBuddy',
+  'Paste the accessToken value':'Вставьте значение accessToken',
+  'Enterprise id (optional)':'ID организации (необязательно)',
+  'Save':'Сохранить',
+  'Remove':'Удалить',
+  'Credential saved — the balance is read with it':'Учётные данные сохранены — баланс читается с их помощью',
+  'Paste a credential to read the Credits balance':'Вставьте учётные данные, чтобы видеть баланс кредитов',
   'Colour transition':'Переход цвета',
   'Hard step':'Резкая смена',
   'Colour ramp':'Плавный переход',
@@ -419,6 +446,13 @@ const RU_STATIC = {
   'App designed and developed by':'Приложение разработал', 'Saved':'Сохранено'
 };
 const ZH_STATIC = {
+  'WorkBuddy credential':'WorkBuddy 凭据',
+  'Paste the accessToken value':'粘贴 accessToken 的值',
+  'Enterprise id (optional)':'企业 ID（可选）',
+  'Save':'保存',
+  'Remove':'移除',
+  'Credential saved — the balance is read with it':'凭据已保存——余额将用它读取',
+  'Paste a credential to read the Credits balance':'粘贴凭据后即可读取额度余额',
   'Colour transition':'颜色过渡',
   'Hard step':'阶梯式',
   'Colour ramp':'颜色渐变',
@@ -520,6 +554,13 @@ const ZH_STATIC = {
   'this screen cannot be remembered by name':'这块屏幕无法按名称记住'
 };
 const ZH_HANT_STATIC = {
+  'WorkBuddy credential':'WorkBuddy 憑證',
+  'Paste the accessToken value':'貼上 accessToken 的值',
+  'Enterprise id (optional)':'企業 ID（選填）',
+  'Save':'儲存',
+  'Remove':'移除',
+  'Credential saved — the balance is read with it':'憑證已儲存——餘額將用它讀取',
+  'Paste a credential to read the Credits balance':'貼上憑證後即可讀取額度餘額',
   'Colour transition':'顏色過渡',
   'Hard step':'階梯式',
   'Colour ramp':'顏色漸變',
@@ -621,6 +662,13 @@ const ZH_HANT_STATIC = {
   'this screen cannot be remembered by name':'這塊螢幕無法按名稱記住'
 };
 const JA_STATIC = {
+  'WorkBuddy credential':'WorkBuddy の認証情報',
+  'Paste the accessToken value':'accessToken の値を貼り付け',
+  'Enterprise id (optional)':'エンタープライズ ID（任意）',
+  'Save':'保存',
+  'Remove':'削除',
+  'Credential saved — the balance is read with it':'認証情報を保存しました — 残高はこれで読み取ります',
+  'Paste a credential to read the Credits balance':'認証情報を貼り付けるとクレジット残高を読み取れます',
   'Colour transition':'色の遷移',
   'Hard step':'段階的',
   'Colour ramp':'カラーグラデーション',
@@ -709,6 +757,13 @@ const JA_STATIC = {
   'Model data':'モデルのデータ'
 };
 const KO_STATIC = {
+  'WorkBuddy credential':'WorkBuddy 자격 증명',
+  'Paste the accessToken value':'accessToken 값 붙여넣기',
+  'Enterprise id (optional)':'엔터프라이즈 ID (선택)',
+  'Save':'저장',
+  'Remove':'제거',
+  'Credential saved — the balance is read with it':'자격 증명이 저장되었습니다 — 이 값으로 잔액을 읽습니다',
+  'Paste a credential to read the Credits balance':'자격 증명을 붙여넣으면 크레딧 잔액을 읽을 수 있습니다',
   'Colour transition':'색상 전환',
   'Hard step':'단계식',
   'Colour ramp':'색상 그라데이션',
@@ -812,6 +867,13 @@ const KO_STATIC = {
   'Русский':'Русский'
 };
 const UK_STATIC = {
+  'WorkBuddy credential':'Облікові дані WorkBuddy',
+  'Paste the accessToken value':'Вставте значення accessToken',
+  'Enterprise id (optional)':'ID організації (необовʼязково)',
+  'Save':'Зберегти',
+  'Remove':'Видалити',
+  'Credential saved — the balance is read with it':'Облікові дані збережено — баланс читається з них',
+  'Paste a credential to read the Credits balance':'Вставте облікові дані, щоб бачити баланс кредитів',
   'Colour transition':'Перехід кольору',
   'Hard step':'Різкий крок',
   'Colour ramp':'Кольоровий градієнт',
@@ -1149,6 +1211,26 @@ function agSelect(key, choices, value){
     + choices.map(([v, t]) => '<option value="' + v + '"' + (v === value ? ' selected' : '') + '>' + esc(ui(t, t)) + '</option>').join('')
     + '</select>';
 }
+/* WorkBuddy seals the credential its own app writes with a key only that app holds, so this build can
+   never read its balance from the session file. A token pasted here is the only route to that number,
+   and the page is deliberately never told what the token is: the fields are write-only, and the only
+   thing that comes back is whether one is stored. */
+function workbuddyCredentialRow(p){
+  const savedNote = 'Credential saved — the balance is read with it';
+  const emptyNote = 'Paste a credential to read the Credits balance';
+  const saved = !!p.credential;
+  return '<div class="acct-col"><span>' + esc(ui('WorkBuddy credential', 'WorkBuddy credential')) + '</span>'
+    + '<input class="cred" data-wb="token" type="password" autocomplete="off" spellcheck="false" placeholder="'
+    + esc(ui('Paste the accessToken value', 'Paste the accessToken value')) + '">'
+    + '<input class="cred" data-wb="enterprise" type="text" autocomplete="off" spellcheck="false" placeholder="'
+    + esc(ui('Enterprise id (optional)', 'Enterprise id (optional)')) + '">'
+    + '<div class="acct-actions">'
+    + '<button class="mini" data-wb-save>' + esc(ui('Save', 'Save')) + '</button>'
+    + (saved ? '<button class="mini ghost" data-wb-clear>' + esc(ui('Remove', 'Remove')) + '</button>' : '')
+    + '</div>'
+    + '<div class="acct-note">' + esc(ui(saved ? savedNote : emptyNote, saved ? savedNote : emptyNote)) + '</div>'
+    + '</div>';
+}
 function accountBlock(p, isOn, locked){
   const st = statusText(p);
   let h = '<div class="acct' + (isOn ? '' : ' off') + '">'
@@ -1160,6 +1242,9 @@ function accountBlock(p, isOn, locked){
     h += '<div class="acct-sub"><span>' + esc(ui('Notch reads', 'Notch reads')) + '</span>' + agSelect('limit', AG_LIMITS, agPrefs.limit) + '</div>'
       + '<div class="acct-sub"><span>' + esc(ui('Model data', 'Model data')) + '</span>' + agSelect('model', AG_MODELS, agPrefs.model) + '</div>';
   }
+  // Only while the provider is on the notch: a credential is only useful to a cell that is being
+  // drawn, and the list below is for switching things on, not for configuring them.
+  if(p.id === 'workbuddy' && isOn) h += workbuddyCredentialRow(p);
   return h + '</div>';
 }
 function renderAccounts(){
@@ -1198,9 +1283,31 @@ function toggleNotch(id){
   saveNotch(on);
 }
 const accountsPane = document.getElementById('pane-accounts');
+/* The pasted credential, which is never read back: the page sends it once and then only ever learns
+   whether one is stored. Saving refreshes the option list rather than patching a local flag, so the
+   button row always describes what Rust actually holds. */
+function saveWorkbuddyCredential(){
+  const box = accountsPane.querySelector('[data-wb="token"]');
+  const enterprise = accountsPane.querySelector('[data-wb="enterprise"]');
+  const token = box ? box.value : '';
+  if(!token.trim()){
+    strip(ui('Paste the accessToken value', 'Paste the accessToken value'));
+    return;
+  }
+  invoke('set_workbuddy_credential', { token: token, enterpriseId: enterprise ? enterprise.value : '', userId: '' })
+    .then(() => { if(box) box.value = ''; if(enterprise) enterprise.value = ''; refreshOptions(); toast(); })
+    .catch(e => strip('set_workbuddy_credential failed: ' + errText(e)));
+}
+function clearWorkbuddyCredential(){
+  invoke('clear_workbuddy_credential')
+    .then(() => { refreshOptions(); toast(); })
+    .catch(e => strip('clear_workbuddy_credential failed: ' + errText(e)));
+}
 accountsPane.addEventListener('click', e => {
   const np = e.target.closest('[data-np]');
   if(np){ toggleNotch(np.dataset.np); return; }
+  if(e.target.closest('[data-wb-save]')){ saveWorkbuddyCredential(); return; }
+  if(e.target.closest('[data-wb-clear]')){ clearWorkbuddyCredential(); return; }
 });
 accountsPane.addEventListener('change', e => {
   const box = e.target.closest('[data-ag]');

@@ -138,6 +138,23 @@
   .w-track{height:4px;border-radius:2px;background:var(--bar);margin:6px 0 4px;overflow:hidden}
   .w-fill{height:100%;border-radius:2px}
   .w-used{font-size:11px;color:var(--ink-dim)}
+  /* The money half of a count window: the token figure stays the one the eye lands on and the amount
+     it works out to rides beside it, dimmer, because the tokens are the measurement and the money is
+     the consequence. */
+  .w-money{color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .w-money::before{content:' · '}
+  /* What a meter cannot say: a ring at 13.5% is the same picture at 173,000 credits and at
+     1,730,000, so the absolute remainder gets its own line rather than an invented proportion. */
+  .w-left{font-size:11px;color:var(--ink-2);margin-top:2px;font-variant-numeric:tabular-nums}
+  /* The spend breakdown, when the provider's own history can be priced. Fenced off like the session
+     list, because it is a different kind of claim: everything above is what the vendor said, and
+     this is what this machine worked out. */
+  .c-cost{margin-top:12px;border-top:1px solid var(--card-rule);padding-top:8px}
+  .c-cost-head{font-size:12px;font-weight:700;color:var(--ink-2)}
+  .c-cost-row{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--ink-4);padding:2px 0}
+  .c-cost-row.total{color:var(--ink-2);font-weight:600;border-top:1px solid var(--card-rule);margin-top:2px;padding-top:4px}
+  .c-cost-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .c-cost-note{font-size:11px;color:var(--ink-dim);line-height:1.5;margin-top:4px}
   .g-head{font-size:12px;font-weight:700;color:var(--ink-2);margin-top:12px}
   .g-box{border:1px solid var(--card-line);border-radius:10px;padding:0 10px 8px;margin-top:6px}
   .c-note{font-size:12px;color:var(--ink-3);line-height:1.5;margin-top:6px}
@@ -367,7 +384,34 @@ function countCopy(w){
   const many=w.count===1?unit:unit+'s';
   return w.count>0?`~${thousands(w.count)} ${textCopy(many)}`:textCopy('no '+many);
 }
+// A spend figure. Small amounts need more precision than round ones do: a month of cache-heavy work
+// can come to a few cents, and "¥0.00" would read as nothing when the point is that it is cheap
+// rather than free.
+function money(v,currency){
+  const n=Number(v);
+  if(!isFinite(n)) return '';
+  const symbol=currency==='USD'?'$':'¥';
+  const size=Math.abs(n);
+  if(size===0) return symbol+'0';
+  return symbol+n.toFixed(size<0.01?3:2);
+}
 // END TESTABLE COUNT FORMAT SELECTOR
+// What a window's usage works out to in money, when the provider's own history can be priced. The ≈
+// is not decoration: no vendor confirmed this figure — it is this machine's tokens times a published
+// rate card — and the breakdown under the windows says so again in full.
+function costCopy(w,snap){
+  if(w.cost==null) return '';
+  const currency=(snap&&snap.cost&&snap.cost.currency)||'CNY';
+  return `<span class="w-money">≈ ${money(w.cost,currency)}</span>`;
+}
+// What a ring cannot say. A meter at 13.5 % is the same picture at 173,000 credits and at 1,730,000,
+// so when the provider published the absolute figure it gets a line of its own. Empty when there is
+// none, because an invented remainder would be worse than the silence.
+function leftCopy(w){
+  if(w.remaining==null) return '';
+  const unit=textCopy(w.unit==='credits'?'Credits':String(w.unit||''));
+  return `<div class="w-left">${esc(ui().leftOf(thousands(w.remaining),unit))}</div>`;
+}
 // Both ends, since vendors disagree on which they print; the left half comes from the rounded used half, as their dashboards do
 function usedCopy(w){
   const v=w.used*100;
@@ -458,6 +502,12 @@ const TEXT={
     'request':'요청',
     'requests':'요청',
     'Credits':'크레딧',
+    'Estimated spend':'추정 지출',
+    'Cache-hit input':'캐시 적중 입력',
+    'Cache-miss input':'캐시 미적중 입력',
+    'Output':'출력',
+    'Estimated from this machine\'s transcripts and DeepSeek\'s published rates. Weekday peak hours cost double.':'이 컴퓨터의 기록과 DeepSeek 공식 요금표로 추정한 값입니다. 평일 피크 시간은 두 배입니다.',
+    'WorkBuddy refused the pasted credential — paste a fresh one in Settings':'WorkBuddy가 붙여넣은 자격 증명을 거부했습니다 — 설정에서 새로 붙여넣으세요',
     'Today':'오늘',
     'Last 7 days':'최근 7일',
     'Last 30 days':'최근 30일',
@@ -519,6 +569,12 @@ const TEXT={
     'request':'requisição',
     'requests':'requisições',
     'Credits':'Créditos',
+    'Estimated spend':'Gasto estimado',
+    'Cache-hit input':'Entrada com cache',
+    'Cache-miss input':'Entrada sem cache',
+    'Output':'Saída',
+    'Estimated from this machine\'s transcripts and DeepSeek\'s published rates. Weekday peak hours cost double.':'Estimado a partir dos registos desta máquina e das tabelas oficiais da DeepSeek. Horários de pico em dias úteis custam o dobro.',
+    'WorkBuddy refused the pasted credential — paste a fresh one in Settings':'O WorkBuddy recusou a credencial colada — cole uma nova nas Configurações',
     'Today':'Hoje',
     'Last 7 days':'Últimos 7 dias',
     'Last 30 days':'Últimos 30 dias',
@@ -569,6 +625,12 @@ const TEXT={
     'request':'запит',
     'requests':'запитів',
     'Credits':'Кредити',
+    'Estimated spend':'Оцінка витрат',
+    'Cache-hit input':'Вхід із кешу',
+    'Cache-miss input':'Вхід без кешу',
+    'Output':'Вихід',
+    'Estimated from this machine\'s transcripts and DeepSeek\'s published rates. Weekday peak hours cost double.':'Оцінка за записами цього комп’ютера та офіційними тарифами DeepSeek. У пікові години будніх днів тариф подвоюється.',
+    'WorkBuddy refused the pasted credential — paste a fresh one in Settings':'WorkBuddy відхилив вставлені облікові дані — вставте нові в налаштуваннях',
     'Today':'Сьогодні',
     'Last 7 days':'Останні 7 днів',
     'Last 30 days':'Останні 30 днів',
@@ -620,6 +682,12 @@ const TEXT={
     'request':'запрос',
     'requests':'запросов',
     'Credits':'Кредиты',
+    'Estimated spend':'Оценка расходов',
+    'Cache-hit input':'Ввод из кеша',
+    'Cache-miss input':'Ввод без кеша',
+    'Output':'Вывод',
+    'Estimated from this machine\'s transcripts and DeepSeek\'s published rates. Weekday peak hours cost double.':'Оценка по записям этого компьютера и официальным тарифам DeepSeek. В пиковые часы будних дней тариф удваивается.',
+    'WorkBuddy refused the pasted credential — paste a fresh one in Settings':'WorkBuddy отклонил вставленные учётные данные — вставьте новые в настройках',
     'Today':'Сегодня',
     'Last 7 days':'Последние 7 дней',
     'Last 30 days':'Последние 30 дней',
@@ -668,6 +736,12 @@ const TEXT={
     'request':'次请求',
     'requests':'次请求',
     'Credits':'额度',
+    'Estimated spend':'估算花费',
+    'Cache-hit input':'缓存命中输入',
+    'Cache-miss input':'缓存未命中输入',
+    'Output':'输出',
+    'Estimated from this machine\'s transcripts and DeepSeek\'s published rates. Weekday peak hours cost double.':'按本机转录用量与 DeepSeek 官方价目表估算。工作日高峰时段价格翻倍。',
+    'WorkBuddy refused the pasted credential — paste a fresh one in Settings':'WorkBuddy 拒绝了你粘贴的凭据——请在设置里粘贴一个新的',
     'Today':'今天',
     'Last 7 days':'近 7 天',
     'Last 30 days':'近 30 天',
@@ -716,6 +790,12 @@ const TEXT={
     'request':'次要求',
     'requests':'次要求',
     'Credits':'額度',
+    'Estimated spend':'估算花費',
+    'Cache-hit input':'快取命中輸入',
+    'Cache-miss input':'快取未命中輸入',
+    'Output':'輸出',
+    'Estimated from this machine\'s transcripts and DeepSeek\'s published rates. Weekday peak hours cost double.':'按本機轉錄用量與 DeepSeek 官方價目表估算。平日高峰時段價格加倍。',
+    'WorkBuddy refused the pasted credential — paste a fresh one in Settings':'WorkBuddy 拒絕了你貼上的憑證——請在設定裡貼上新的',
     'Today':'今天',
     'Last 7 days':'近 7 天',
     'Last 30 days':'近 30 天',
@@ -773,6 +853,7 @@ const PATTERNS={
     [/Antigravity is closed — last reading kept/g,'Antigravity가 닫혀 있습니다 — 마지막 측정값 유지'],
     [/Sign in to Cursor \(the editor\) to see usage\./g,'사용량을 확인하려면 Cursor 편집기에 로그인하십시오.'],
     [/Cursor session was rejected — sign in again in the editor/g,'Cursor 세션이 거부되었습니다 — 편집기에서 다시 로그인하십시오'],
+    [/^Not priced: (.+)$/,'가격 미정: $1'],
   ],
   'pt-BR':[
     [/^(\d+)m limit$/,'Limite de $1 min'],
@@ -809,6 +890,7 @@ const PATTERNS={
     [/Antigravity is closed — last reading kept/g,'O Antigravity está fechado — última leitura mantida'],
     [/Sign in to Cursor \(the editor\) to see usage\./g,'Entre no Cursor (o editor) para ver o uso.'],
     [/Cursor session was rejected — sign in again in the editor/g,'A sessão do Cursor foi rejeitada — entre novamente no editor'],
+    [/^Not priced: (.+)$/,'Não precificado: $1'],
   ],
   uk:[
     [/^(\d+)m limit$/,'Ліміт $1 хв'],
@@ -845,6 +927,7 @@ const PATTERNS={
     [/Antigravity is closed — last reading kept/g,'Antigravity закрито — збережено останній показник'],
     [/Sign in to Cursor \(the editor\) to see usage\./g,'Увійдіть у Cursor (редактор), щоб бачити використання.'],
     [/Cursor session was rejected — sign in again in the editor/g,'Сеанс Cursor відхилено — увійдіть у редакторі ще раз'],
+    [/^Not priced: (.+)$/,'Без тарифу: $1'],
   ],
   ru:[
     [/^(\d+)m limit$/,'Лимит на $1 мин'],
@@ -881,6 +964,7 @@ const PATTERNS={
     [/Antigravity is closed — last reading kept/g,'Antigravity закрыт — сохранено последнее показание'],
     [/Sign in to Cursor \(the editor\) to see usage\./g,'Войдите в Cursor (редактор), чтобы увидеть использование.'],
     [/Cursor session was rejected — sign in again in the editor/g,'Сеанс Cursor отклонён — снова войдите в редакторе'],
+    [/^Not priced: (.+)$/,'Без тарифа: $1'],
   ],
   zh:[
     // WorkBuddy and DeepSeek Harness notes, which the Rust side writes as whole English sentences.
@@ -930,6 +1014,7 @@ const PATTERNS={
     [/Antigravity is closed — last reading kept/g,'Antigravity 已关闭 — 保留上一次读数'],
     [/Sign in to Cursor \(the editor\) to see usage\./g,'请登录 Cursor（编辑器）以查看用量。'],
     [/Cursor session was rejected — sign in again in the editor/g,'Cursor 会话被拒绝 — 请在编辑器中重新登录'],
+    [/^Not priced: (.+)$/,'未计价：$1'],
   ],
   'zh-Hant':[
     // WorkBuddy and DeepSeek Harness notes, as the Traditional Chinese side of the same list above.
@@ -978,6 +1063,7 @@ const PATTERNS={
     [/Antigravity is closed — last reading kept/g,'Antigravity 已關閉 — 保留上一次讀數'],
     [/Sign in to Cursor \(the editor\) to see usage\./g,'請登入 Cursor（編輯器）以查看用量。'],
     [/Cursor session was rejected — sign in again in the editor/g,'Cursor 工作階段被拒絕 — 請在編輯器中重新登入'],
+    [/^Not priced: (.+)$/,'未計價：$1'],
   ],
 };
 // Grammar differs enough that a format string would not carry it — Russian puts the verb last,
@@ -986,31 +1072,38 @@ const UI={
   ko:{locale:'ko-KR',title:n=>n+' 사용량',resetting:'재설정 중…',resetsIn:m=>`${m}분 후 재설정`,
       resetsAt:t=>`${t}에 재설정`,resetsOn:(d,t)=>`${d} ${t}에 재설정`,resetsDate:d=>`${d}에 재설정`,
       ago:m=>m<60?`${m}분 전`:`${Math.round(m/60)}시간 전`,
-      usedLeft:(used,left)=>`${used}% 사용 · ${left}% 남음`,andMore:n=>`외 ${n}개`,updated:a=>`${a}에 마지막 업데이트됨`},
+      usedLeft:(used,left)=>`${used}% 사용 · ${left}% 남음`,andMore:n=>`외 ${n}개`,updated:a=>`${a}에 마지막 업데이트됨`,
+      leftOf:(n,u)=>`${u} ${n} 남음`},
   'pt-BR':{locale:'pt-BR',title:n=>'Uso do '+n,resetting:'Renovando…',resetsIn:m=>`Renova em ${m} min`,
       resetsAt:t=>`Renova às ${t}`,resetsOn:(d,t)=>`Renova ${d} às ${t}`,resetsDate:d=>`Renova ${d}`,
       ago:m=>m<60?`há ${m} min`:`há ${Math.round(m/60)} h`,
-      usedLeft:(used,left)=>`${used}% usado · ${left}% restante`,andMore:n=>`e mais ${n}`},
+      usedLeft:(used,left)=>`${used}% usado · ${left}% restante`,andMore:n=>`e mais ${n}`,
+      leftOf:(n,u)=>`${n} ${u} restantes`},
   en:{locale:'en-US',title:n=>n+' Usage',resetting:'Resetting…',resetsIn:m=>`Resets in ${m} min`,
       resetsAt:t=>`Resets at ${t}`,resetsOn:(d,t)=>`Resets ${d} ${t}`,resetsDate:d=>`Resets ${d}`,
       ago:m=>m<60?`${m}m ago`:`${Math.round(m/60)}h ago`,
-      usedLeft:(used,left)=>`${used}% Used · ${left}% left`,andMore:n=>`and ${n} more`,updated:a=>`Updated ${a}`},
+      usedLeft:(used,left)=>`${used}% Used · ${left}% left`,andMore:n=>`and ${n} more`,updated:a=>`Updated ${a}`,
+      leftOf:(n,u)=>`${n} ${u} left`},
   uk:{locale:'uk-UA',title:n=>'Використання '+n,resetting:'Скидання…',resetsIn:m=>`Скидання через ${m} хв`,
       resetsAt:t=>`Скидання о ${t}`,resetsOn:(d,t)=>`Скидання: ${d} ${t}`,resetsDate:d=>`Скидання: ${d}`,
       ago:m=>m<60?`${m} хв тому`:`${Math.round(m/60)} год тому`,
-      usedLeft:(used,left)=>`Використано ${used}% · лишилось ${left}%`,andMore:n=>`і ще ${n}`,updated:a=>`Оновлено ${a}`},
+      usedLeft:(used,left)=>`Використано ${used}% · лишилось ${left}%`,andMore:n=>`і ще ${n}`,updated:a=>`Оновлено ${a}`,
+      leftOf:(n,u)=>`залишилось ${n} ${u}`},
   ru:{locale:'ru-RU',title:n=>'Использование '+n,resetting:'Сброс…',resetsIn:m=>`Сброс через ${m} мин`,
       resetsAt:t=>`Сброс в ${t}`,resetsOn:(d,t)=>`Сброс: ${d} ${t}`,resetsDate:d=>`Сброс: ${d}`,
       ago:m=>m<60?`${m} мин назад`:`${Math.round(m/60)} ч назад`,
-      usedLeft:(used,left)=>`Использовано ${used}% · осталось ${left}%`,andMore:n=>`и ещё ${n}`,updated:a=>`Обновлено ${a}`},
+      usedLeft:(used,left)=>`Использовано ${used}% · осталось ${left}%`,andMore:n=>`и ещё ${n}`,updated:a=>`Обновлено ${a}`,
+      leftOf:(n,u)=>`осталось ${n} ${u}`},
   zh:{locale:'zh-CN',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分钟后重置`,
       resetsAt:t=>`${t} 重置`,resetsOn:(d,t)=>`${d} ${t} 重置`,resetsDate:d=>`${d} 重置`,
       ago:m=>m<60?`${m} 分钟前`:`${Math.round(m/60)} 小时前`,
-      usedLeft:(used,left)=>`已用 ${used}% · 剩余 ${left}%`,andMore:n=>`另有 ${n} 个`,updated:a=>`更新于 ${a}`},
+      usedLeft:(used,left)=>`已用 ${used}% · 剩余 ${left}%`,andMore:n=>`另有 ${n} 个`,updated:a=>`更新于 ${a}`,
+      leftOf:(n,u)=>`剩余 ${n} ${u}`},
   'zh-Hant':{locale:'zh-TW',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分鐘後重置`,
       resetsAt:t=>`${t} 重置`,resetsOn:(d,t)=>`${d} ${t} 重置`,resetsDate:d=>`${d} 重置`,
       ago:m=>m<60?`${m} 分鐘前`:`${Math.round(m/60)} 小時前`,
-      usedLeft:(used,left)=>`已用 ${used}% · 剩餘 ${left}%`,andMore:n=>`另有 ${n} 個`,updated:a=>`更新於 ${a}`},
+      usedLeft:(used,left)=>`已用 ${used}% · 剩餘 ${left}%`,andMore:n=>`另有 ${n} 個`,updated:a=>`更新於 ${a}`,
+      leftOf:(n,u)=>`剩餘 ${n} ${u}`},
 };
 function ui(){return UI[uiLang]||UI.en;}
 function textCopy(value){
@@ -1242,18 +1335,43 @@ function renderCard(){
       if(w.count!=null){
         // A count window has no denominator: `unit` says what is being counted — Antigravity counts
         // requests, WorkBuddy and DeepSeek Harness count tokens. The span belongs to the label above
-        // ("Today", "Last 7 days"), so the row names only the quantity.
+        // ("Today", "Last 7 days"), so the row names only the quantity. The money rides on the same
+        // line rather than claiming a row of its own: it is the same measurement in another unit.
         html+=`<div class="win"><div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span></div>
-          <div class="w-used">${countCopy(w)}</div></div>`;
+          <div class="w-used">${countCopy(w)}${costCopy(w,snap)}</div></div>`;
         continue;
       }
       html+=`<div class="win">
         <div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span><span class="w-reset">${resetCopy(w.resets_at)}</span></div>
         <div class="w-track"><div class="w-fill" style="width:${(Math.min(w.used,1)*100).toFixed(0)}%;background:${tone(w.used)}"></div></div>
         <div class="w-used">${esc(usedCopy(w))}</div>
+        ${leftCopy(w)}
       </div>`;
     }
     if(group) html+=`</div>`;
+    // The money, when this provider's history can be priced. A block of its own rather than more rows
+    // under the windows: everything above is what the vendor reported, and this is what this machine
+    // worked out from it, and the card should not blur the two.
+    if(snap.cost){
+      const parts=(snap.cost.parts||[]).filter(p=>p.tokens>0);
+      const unpriced=snap.cost.unpriced||[];
+      if(parts.length||unpriced.length){
+        // Only the priced kinds are summed, so the total always equals the rows printed above it.
+        const total=parts.reduce((sum,p)=>sum+Number(p.cost||0),0);
+        html+=`<div class="c-cost"><div class="c-cost-head">${esc(textCopy('Estimated spend'))}</div>`;
+        for(const part of parts){
+          html+=`<div class="c-cost-row"><span>${esc(textCopy(part.label))}</span><span class="c-cost-num">${money(part.cost,snap.cost.currency)}</span></div>`;
+        }
+        html+=`<div class="c-cost-row total"><span>${esc(textCopy(snap.cost.window))}</span><span class="c-cost-num">${money(total,snap.cost.currency)}</span></div>`;
+        html+=`<div class="c-cost-note">${esc(textCopy(snap.cost.rate_note))}</div>`;
+        // A model the rate table does not know is named rather than priced off someone else's card:
+        // its tokens are in the counts above and deliberately absent from the money below.
+        if(unpriced.length){
+          html+=`<div class="c-cost-note">${esc(textCopy('Not priced: '+unpriced.join(', ')))}</div>`;
+        }
+        html+=`</div>`;
+      }
+    }
     if(snap.note) html+=`<div class="c-note">${esc(textCopy(snap.note))}</div>`;
   }
   // Detected activity rows (Cursor reports state; Codex and Antigravity are inferred from recent

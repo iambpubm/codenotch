@@ -1329,6 +1329,10 @@ struct TrayOption {
     label: String,
     status: String,
     used: Option<u32>,
+    /// Whether a credential the user pasted is stored for this provider. WorkBuddy is the only
+    /// provider with that route today — its own app seals the session — and every other provider
+    /// answers false rather than leaving the field out, so the settings page renders one shape.
+    credential: bool,
 }
 
 #[tauri::command]
@@ -1340,6 +1344,7 @@ fn get_tray_options(app: AppHandle) -> Vec<TrayOption> {
             label: provider_label(id).to_string(),
             status: snapshot_of(&app, id).status,
             used: ring_pct(&app, id),
+            credential: *id == "workbuddy" && workbuddy::credential_saved(),
         })
         .collect()
 }
@@ -1376,6 +1381,57 @@ fn set_antigravity_prefs(app: AppHandle, limit: String, model: String) -> Antigr
     let _ = app.emit("antigravity_prefs", &prefs);
     tray::refresh_menu(&app);
     prefs
+}
+
+/// What the settings page is told about the pasted WorkBuddy credential.
+///
+/// It never carries the token. The page cannot display it, cannot round-trip it, and cannot leak it
+/// into a DOM node or a log line — all it is told is whether one is stored, how long it is, and which
+/// kind of account it addresses. Reporting the length is enough for a person to recognise the token
+/// they pasted without the value ever leaving Rust.
+#[derive(serde::Serialize)]
+struct WorkbuddyCredentialState {
+    saved: bool,
+    enterprise: bool,
+    token_chars: usize,
+}
+
+fn workbuddy_credential_state() -> WorkbuddyCredentialState {
+    match workbuddy::read_credential() {
+        Some(credential) => WorkbuddyCredentialState {
+            saved: true,
+            enterprise: !credential.enterprise_id.trim().is_empty(),
+            token_chars: credential.access_token.trim().len(),
+        },
+        None => WorkbuddyCredentialState { saved: false, enterprise: false, token_chars: 0 },
+    }
+}
+
+#[tauri::command]
+fn get_workbuddy_credential() -> WorkbuddyCredentialState {
+    workbuddy_credential_state()
+}
+
+/// Stores a pasted token and asks the provider to re-read on the spot, so the balance appears without
+/// waiting out the poll interval. The reply is the state as stored, not as requested.
+#[tauri::command]
+fn set_workbuddy_credential(
+    token: String,
+    enterprise_id: Option<String>,
+    user_id: Option<String>,
+) -> Result<WorkbuddyCredentialState, String> {
+    workbuddy::save_credential(
+        &token,
+        enterprise_id.as_deref().unwrap_or(""),
+        user_id.as_deref().unwrap_or(""),
+    )?;
+    Ok(workbuddy_credential_state())
+}
+
+#[tauri::command]
+fn clear_workbuddy_credential() -> Result<WorkbuddyCredentialState, String> {
+    workbuddy::forget_credential()?;
+    Ok(workbuddy_credential_state())
 }
 
 /// Which providers get a ring on the notch. An empty list means every provider.
@@ -1851,6 +1907,9 @@ fn main() {
             set_notch_slots,
             get_antigravity_prefs,
             set_antigravity_prefs,
+            get_workbuddy_credential,
+            set_workbuddy_credential,
+            clear_workbuddy_credential,
             get_app_icon,
             get_ui_flags,
             set_ui_flags,
