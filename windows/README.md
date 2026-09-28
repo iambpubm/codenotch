@@ -37,15 +37,28 @@ Providers that are not installed simply do not get a cell. A config saved with t
 | **z.ai (GLM)** | The existing Z.AI tool credentials — the GLM Coding Plan key in the environment, in the CLI's config, or in a `~/.claude/settings.json` that points `ANTHROPIC_BASE_URL` at a Z.ai console | The plan's session / weekly windows. |
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
 
-The working-state arc (the thin spinning line inside a ring, and the amber pulse when
-something wants your input) is drawn for every provider whose state can be established from
-what it leaves on disk. Cursor and the DeepSeek Harness *state* their state — Cursor in its
-composer rows, the harness through the `turn/start` / `turn/end` pair it writes around every
-turn — so those two are read rather than inferred, and the harness is the only one that can
-say "waiting on your approval" with certainty. Codex, WorkBuddy and Antigravity are inferred
-from their transcripts: the last entry says which part of a turn they stopped in, and how long
-the file has been quiet says whether they are still there. z.ai and OpenCode have no state to
-read and simply show no arc.
+The working-state arc (the thin spinning line inside a ring, the amber pulse when something
+wants your input, and the green pulse when a run has just finished) is drawn for every provider
+whose state can be established from what it leaves on disk. Cursor and the DeepSeek Harness
+*state* their state — Cursor in its composer rows, the harness through the `turn/start` /
+`turn/end` pair it writes around every turn — so those two are read rather than inferred, and the
+harness is the only one that can say "waiting on your approval" with certainty. Codex, WorkBuddy
+and Antigravity are inferred from their transcripts: the last entry says which part of a turn they
+stopped in, and how long the file has been quiet says whether they are still there. z.ai and
+OpenCode have no state to read and simply show no arc.
+
+Being seen and being fully described are two different questions, and each provider is drawn in
+only the states its own files can settle. The green "just finished" ring lasts ten seconds, which
+is what upstream gives it in all three places it produces the state — and it is only drawn when
+something actually said the work finished: for the harness that is `turn/end` with
+`reason.kind == "completed"` (an aborted, failed or token-limited turn also closes, and none of
+those is a completion), and for Codex it is an explicit `task_complete` rather than the
+`turn_aborted` sitting next to it. Cursor is read the same way upstream reads it, off the
+conversation checkpoint. WorkBuddy is never drawn green, and that is a deliberate refusal rather
+than a gap: its transcripts have no record that marks the end of a turn — the last record of a
+finished turn is an ordinary assistant message, which is also exactly what mid-turn narration is
+written as, 555 times out of 566 measured — so the two cannot be told apart until the file stops
+moving, and a file that stopped moving is not evidence that anything finished.
 
 ### Codex quota recovery
 

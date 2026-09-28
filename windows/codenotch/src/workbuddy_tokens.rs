@@ -154,9 +154,18 @@ pub enum Step {
     Thinking,
     /// A `message` from the user — the turn has just been asked for.
     Asked,
-    /// A `message` from the assistant — the turn's answer. `status` distinguishes `completed` from
-    /// an answer cut short by a rate limit or by you (`incomplete`), but both end the turn, so both
-    /// land here: only leaving the turn counts.
+    /// A `message` from the assistant.
+    ///
+    /// **Not a turn boundary**, which is worth saying because it reads like one. Measured over the
+    /// transcripts on this machine: of 566 assistant messages, 555 are followed by more tool calls
+    /// in the same turn — a message here is usually narration on the way to the next step, and only
+    /// sometimes the answer. `status` distinguishes a finished message from one cut short by a rate
+    /// limit or by you (`incomplete`), but it describes the *message*, not the turn, and the two
+    /// statuses are spread over both cases.
+    ///
+    /// So this is the ambiguous step, and `activity.rs` gives it the shortest window for exactly
+    /// that reason. It also means the format has no way to say "the turn is over" at all, which is
+    /// why WorkBuddy is never drawn in the notch's green.
     Answered,
 }
 
@@ -667,8 +676,9 @@ mod tests {
             case(r#"{"type":"message","role":"assistant","status":"completed","timestamp":14}"#),
             Some((Step::Answered, 14))
         );
-        // A rate limit or an interrupt ends the turn just as surely as an answer does, and the app
-        // says so with `incomplete` — the same place, the same meaning for the notch.
+        // A rate limit or an interrupt is recorded as `incomplete`, but the status describes the
+        // message rather than the turn, so both spellings land on the same step and the window
+        // treats them alike — see `Step::Answered`.
         assert_eq!(
             case(r#"{"type":"message","role":"assistant","status":"incomplete","timestamp":15}"#),
             Some((Step::Answered, 15))

@@ -61,7 +61,9 @@ pub struct AppState {
     /// Provider glyph cache, collected at launch and again on a tray refresh
     pub glyphs: Mutex<std::collections::HashMap<String, glyphs::Glyph>>,
     /// Working state of the providers whose state can be established: Cursor and the DeepSeek
-    /// Harness report it, Codex, WorkBuddy and Antigravity are inferred from recent writes
+    /// Harness report it, Codex, WorkBuddy and Antigravity are inferred from recent writes.
+    /// `waiting` and `success` are narrowed further than `busy` — a provider is only ever drawn in
+    /// those when its own files settle the question, which is why WorkBuddy appears in neither.
     pub activity: Mutex<Vec<activity::Activity>>,
 }
 

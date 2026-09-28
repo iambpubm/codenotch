@@ -422,6 +422,11 @@ fn read_transcript(path: &Path) -> Option<String> {
 /// silence thresholds the Codex one needs. The only way to get a stale `turn/start` is for the
 /// process to die before its `finally` runs, and `activity.rs` covers that with an age check.
 ///
+/// The `reason.kind` that comes with that `turn/end` is read as well, because the four edges say
+/// only *that* a turn ended while the notch has a fifth thing to draw: a turn that just finished.
+/// This is the only provider on the machine that states that outright instead of leaving it to be
+/// inferred from silence — see `State::completed`.
+///
 /// `approval/asked` / `approval/decided` are written as a pair, one `asked` and the `decided` that
 /// always follows it, so an `asked` with no `decided` after it is a question still on screen. That
 /// is the same fact the notch draws in amber.
@@ -447,9 +452,17 @@ fn edge_of(kind: &str) -> Option<Edge> {
     }
 }
 
+/// One edge as the log wrote it: which one, when, and — for a `turn/end` — why the turn ended.
+struct EdgeHit {
+    edge: Edge,
+    at: u64,
+    /// The `turn/end`'s `reason.kind`. `None` for the other three edges, which carry no reason.
+    reason: Option<String>,
+}
+
 /// The last edge written in one block of decoded lines, with its time. The walk is backwards
 /// because only the last one matters, and stopping at the first hit is what keeps it cheap.
-fn edge_in(text: &str) -> Option<(Edge, u64)> {
+fn edge_in(text: &str) -> Option<EdgeHit> {
     for line in text.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -458,7 +471,15 @@ fn edge_in(text: &str) -> Option<(Edge, u64)> {
         let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
         let Some(edge) = record.get("type").and_then(|t| t.as_str()).and_then(edge_of) else { continue };
         let at = record.get("time").and_then(|t| t.as_i64()).unwrap_or(0).max(0) as u64;
-        return Some((edge, at));
+        // `turn/end` is the one edge that explains itself. `TurnEndReason` in the harness's own type
+        // declarations is the domain: `completed` is a turn that finished its work, and `aborted`,
+        // `blocked`, `error`, `max-tokens` and the crash repair the loop writes for a log whose last
+        // turn never closed are all endings of a different kind. Reading it is what lets the notch
+        // draw a green ring for the first and nothing at all for the rest.
+        let reason = (edge == Edge::TurnClosed)
+            .then(|| str_of(record.pointer("/data/reason/kind")))
+            .filter(|kind| !kind.is_empty());
+        return Some(EdgeHit { edge, at, reason });
     }
     None
 }
@@ -470,6 +491,9 @@ pub struct State {
     pub edge: Option<Edge>,
     /// When that edge was written, in ms since the epoch. Zero when there is none.
     pub at: u64,
+    /// Why the last turn ended, when the last edge was `turn/end`. `None` when no turn has ended,
+    /// and also for the three edges that have nothing to explain.
+    pub outcome: Option<String>,
     /// The title the session gave itself, empty when it never wrote one.
     pub title: String,
     /// The directory the session runs in, from the log's own header.
@@ -486,6 +510,16 @@ impl State {
     /// A tool asked for permission and nothing has answered it yet.
     pub fn waiting(&self) -> bool {
         matches!(self.edge, Some(Edge::ApprovalAsked))
+    }
+
+    /// The last turn ran to its end rather than being cut short.
+    ///
+    /// Only `completed` counts. A turn that was aborted, that failed, that hit its output ceiling,
+    /// or that never closed at all and was repaired after a crash ended some other way, and none of
+    /// those is a piece of work finishing — a green ring on any of them would say the opposite of
+    /// what happened. The distinction is the harness's own, so it is read rather than inferred.
+    pub fn completed(&self) -> bool {
+        matches!(self.edge, Some(Edge::TurnClosed)) && self.outcome.as_deref() == Some("completed")
     }
 }
 
@@ -542,18 +576,20 @@ pub fn read_state(path: &Path) -> Option<State> {
     let mut state = State::default();
     if !path.to_string_lossy().ends_with(".jsonl.zstd") {
         let text = String::from_utf8_lossy(&bytes);
-        if let Some((edge, at)) = edge_in(&text) {
-            state.edge = Some(edge);
-            state.at = at;
+        if let Some(hit) = edge_in(&text) {
+            state.edge = Some(hit.edge);
+            state.at = hit.at;
+            state.outcome = hit.reason;
         }
         head_of(&text, &mut state);
         return Some(state);
     }
     let frames = scan_zstd_frames(&bytes);
     for (start, end) in frames.iter().rev().take(EDGE_SCAN_FRAMES) {
-        if let Some((edge, at)) = edge_in(&decode_frame_lossy(&bytes[*start..*end])) {
-            state.edge = Some(edge);
-            state.at = at;
+        if let Some(hit) = edge_in(&decode_frame_lossy(&bytes[*start..*end])) {
+            state.edge = Some(hit.edge);
+            state.at = hit.at;
+            state.outcome = hit.reason;
             break;
         }
     }
@@ -1741,7 +1777,13 @@ mod tests {
     }
 
     fn turn_end(turn: i64, at: u64) -> serde_json::Value {
-        serde_json::json!({"type": "turn/end", "seq": 20, "time": at, "data": {"turn": turn, "reason": {"kind": "completed"}}})
+        turn_end_because(turn, at, "completed")
+    }
+
+    /// The same record with the harness's own word for why the turn stopped. `TurnEndReason` is
+    /// merge-extensible, so anything at all can arrive here.
+    fn turn_end_because(turn: i64, at: u64, kind: &str) -> serde_json::Value {
+        serde_json::json!({"type": "turn/end", "seq": 20, "time": at, "data": {"turn": turn, "reason": {"kind": kind}}})
     }
 
     #[test]
@@ -1756,6 +1798,52 @@ mod tests {
         assert_eq!(state.at, 1_700_000_020_000);
         assert!(!state.working(), "a closed turn is the end of the work, not the middle");
         assert!(!state.waiting());
+        assert!(state.completed(), "and `completed` is the harness saying the work was finished");
+        assert_eq!(state.outcome.as_deref(), Some("completed"));
+    }
+
+    /// The five edges are not the same question as "did this finish". An abort, a failure and a
+    /// token ceiling all close a turn, and drawing a green ring for any of them would say the
+    /// opposite of what happened — so only the harness's own `completed` counts.
+    #[test]
+    fn only_a_completed_turn_counts_as_finished() {
+        for kind in ["aborted", "error", "max-tokens", "blocked", "crash-orphaned"] {
+            let mut rows = opening("D:\\work", "Cut short");
+            rows.push(turn_start(1, 1_700_000_010_000));
+            rows.push(turn_end_because(1, 1_700_000_020_000, kind));
+            let state = read_state(&log_at("cut.v3.jsonl.zstd", &rows)).unwrap();
+            assert_eq!(state.edge, Some(Edge::TurnClosed), "{kind} still closes the turn");
+            assert!(!state.working(), "{kind} is over");
+            assert!(!state.completed(), "{kind} is not a piece of work finishing");
+            assert_eq!(state.outcome.as_deref(), Some(kind));
+        }
+    }
+
+    /// A `turn/end` with no `reason` at all — an older log, or a plugin that replaced the map — is
+    /// closed and unexplained, which is not the same as completed.
+    #[test]
+    fn a_turn_end_with_no_reason_is_closed_but_not_finished() {
+        let mut rows = opening("D:\\work", "Unexplained");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        rows.push(serde_json::json!({"type": "turn/end", "seq": 20, "time": 1_700_000_020_000u64, "data": {"turn": 1}}));
+        let state = read_state(&log_at("bareend.v3.jsonl.zstd", &rows)).unwrap();
+        assert_eq!(state.edge, Some(Edge::TurnClosed));
+        assert_eq!(state.outcome, None);
+        assert!(!state.completed());
+    }
+
+    /// The reason belongs to the same record as the edge it explains. A `turn/end` that closed an
+    /// earlier turn must not lend its reason to a later `turn/start`.
+    #[test]
+    fn the_reason_belongs_to_the_edge_it_came_with() {
+        let mut rows = opening("D:\\work", "Two turns, one finished");
+        rows.push(turn_start(1, 1_700_000_010_000));
+        rows.push(turn_end_because(1, 1_700_000_020_000, "aborted"));
+        rows.push(turn_start(2, 1_700_000_030_000));
+        let state = read_state(&log_at("reopened.v3.jsonl.zstd", &rows)).unwrap();
+        assert_eq!(state.edge, Some(Edge::TurnOpen));
+        assert_eq!(state.outcome, None, "the open turn explains nothing");
+        assert!(!state.completed());
     }
 
     #[test]

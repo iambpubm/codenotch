@@ -455,7 +455,7 @@ let glmSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let opencodeSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let agSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let glyphs={}; // id → {kind:'mark'|'appicon', url}
-let activity=[]; // working state, where the probe can see it: {provider,state:'busy'|'waiting',name,detail,since}
+let activity=[]; // working state, where the probe can see it: {provider,state:'busy'|'waiting'|'success',name,detail,since}
 /* Which screen edge the notch is pinned to. Rust owns it (it is what placed the window); the page is
    told so it can mirror or rotate itself to match. 'right' is the default and the pre-edge layout. */
 let notchEdge='right';
@@ -518,6 +518,7 @@ const TEXT={
     'Resets at':'재설정 시각',
     'Resets':'재설정',
     'Working':'작업 중',
+    'Complete':'완료',
     'Waiting':'대기 중',
     'Streaming (network)':'스트리밍 중 (네트워크)',
     'Rate limited, retrying in':'요청 제한, 재시도까지',
@@ -586,6 +587,7 @@ const TEXT={
     'Resets at':'Redefine às',
     'Resets':'Redefine',
     'Working':'Trabalhando',
+    'Complete':'Concluído',
     'Waiting':'Aguardando',
     'Streaming (network)':'Transmitindo (rede)',
     'Rate limited, retrying in':'Limite de requisições, nova tentativa em',
@@ -643,6 +645,7 @@ const TEXT={
     'Resets at':'Скидання о',
     'Resets':'Скидання',
     'Working':'Працює',
+    'Complete':'Завершено',
     'Waiting':'Очікує',
     'Streaming (network)':'Потокова передача (мережа)',
     'Rate limited, retrying in':'Ліміт запитів, повтор через',
@@ -701,6 +704,7 @@ const TEXT={
     'Resets at':'Сброс в',
     'Resets':'Сброс',
     'Working':'Работа',
+    'Complete':'Завершено',
     'Waiting':'Ожидание',
     'Streaming (network)':'Потоковая передача (сеть)',
     'Rate limited, retrying in':'Превышен лимит, повтор через',
@@ -756,6 +760,7 @@ const TEXT={
     'Resets at':'重置于',
     'Resets':'重置',
     'Working':'工作中',
+    'Complete':'已完成',
     'Waiting':'等待中',
     'Streaming (network)':'正在传输（网络）',
     'Rate limited, retrying in':'已限流，稍后重试',
@@ -811,6 +816,7 @@ const TEXT={
     'Resets at':'重置於',
     'Resets':'重置',
     'Working':'工作中',
+    'Complete':'已完成',
     'Waiting':'等待中',
     'Streaming (network)':'正在傳輸（網路）',
     'Rate limited, retrying in':'已限流，稍後重試',
@@ -1150,15 +1156,22 @@ function setUiLanguage(lang){
   renderRing();
   if(card&&card.classList.contains('show')) renderCard();
 }
-// "Is it working?" per provider, from the activity probe. Returns running | attention | idle.
+// "Is it working?" per provider, from the activity probe. Returns running | attention | complete |
+// idle — the four states upstream's `ActivitySummary` has, in its precedence: anything blocked on you
+// outranks anything merely busy, and a run that has just finished is worth drawing before the cell
+// goes quiet again.
+//
 // WorkBuddy and the DeepSeek Harness are both covered: the first is read from the tail of its
 // transcripts the way Codex is, the second from the `turn/end` the harness writes from a finally,
-// which also makes "waiting on your approval" a fact rather than an inference. z.ai and OpenCode
-// are still unseen, so their cells stay idle and draw no activity arc.
+// which also makes "waiting on your approval" a fact rather than an inference. Which of the four it
+// can show is a separate question from being seen at all, and the probe is the only thing that
+// knows: WorkBuddy stops at `busy`, because its transcripts carry no record that would settle either
+// of the other two. z.ai and OpenCode are still unseen, so their cells stay idle and draw no arc.
 function workState(id){
   const acts=activity.filter(a=>a.provider===id);
   if(acts.some(a=>a.state==='waiting')) return 'attention';
   if(acts.some(a=>a.state==='busy')) return 'running';
+  if(acts.some(a=>a.state==='success')) return 'complete';
   return 'idle';
 }
 function glyphHtml(p,small){
@@ -1263,6 +1276,10 @@ function svgArc(r,frac,color,width,extra=''){
     stroke-dasharray="${(C*frac).toFixed(2)} ${C.toFixed(2)}" stroke-linecap="round"
     transform="rotate(-90 28 28)" ${extra}/>`;
 }
+// A full ring breathing in place. Waiting and "just finished" share the shape and differ only in
+// colour: amber is the one state that wants something from you, and green is the one state that
+// wants nothing at all. `arc-pulse` is the same 6-step animation the amber one has always used.
+const pulseArc=(r,color)=>`<g class="arc-pulse"><circle cx="28" cy="28" r="${r}" fill="none" stroke="${color}" stroke-width="2.5"/></g>`;
 
 function renderRing(){
   const ps=providers();
@@ -1295,12 +1312,14 @@ function renderRing(){
       }
     }
     svg.innerHTML=inner;
-    { // thin inner arc: spinning white = working, yellow pulse = waiting on you (one animation for
-      // every provider, whatever the source of the state behind it)
+    { // thin inner arc: spinning white = working, amber pulse = waiting on you, green pulse = a run
+      // that has just finished. One animation for every provider, whatever the source of the state
+      // behind it, and the same three the Mac draws from `ActivityArc`.
       // Its own layer, so a stale reading can dim around it without dimming it: see `.ringwrap.stale`
       const ws=workState(p.base);
       if(ws==='running') activity.innerHTML=`<g class="arc-spin">${svgArc(19,0.28,INK,2.5)}</g>`;
-      else if(ws==='attention') activity.innerHTML=`<g class="arc-pulse"><circle cx="28" cy="28" r="19" fill="none" stroke="${WATCH}" stroke-width="2.5"/></g>`;
+      else if(ws==='attention') activity.innerHTML=pulseArc(19,WATCH);
+      else if(ws==='complete') activity.innerHTML=pulseArc(19,AMPLE);
       else activity.innerHTML='';
     }
     if(p.snap.status==='needsAuth'||p.snap.status==='none') pct.textContent='—';
@@ -1420,13 +1439,16 @@ function renderCard(){
     if(snap.note) html+=`<div class="c-note">${esc(textCopy(snap.note))}</div>`;
   }
   // Detected activity rows (Cursor and the harness report state; Codex, WorkBuddy and Antigravity
-  // are inferred from recent writes). Waiting before busy, newest first within each, so what gets
-  // cut is what matters least.
-  const acts=activity.filter(a=>a.provider===p.base).sort((a,b)=>(b.state==='waiting')-(a.state==='waiting')||b.since-a.since);
+  // are inferred from recent writes). Ordered by what it asks of you and then by recency — waiting,
+  // then working, then a run that just finished — so what gets cut by the row limit matters least.
+  // The rank matches the probe's own sort, which decides the same order for the ring above.
+  const RANK={waiting:0,busy:1,success:2};
+  const acts=activity.filter(a=>a.provider===p.base)
+    .sort((a,b)=>(RANK[a.state]??3)-(RANK[b.state]??3)||b.since-a.since);
   if(acts.length){
     html+=`<div class="c-sessions">`;
     for(const a of acts.slice(0,SESSION_ROWS)){
-      const col=a.state==='waiting'?WATCH:INK;
+      const col=a.state==='waiting'?WATCH : a.state==='success'?AMPLE : INK;
       html+=`<div class="s-row"><span class="s-dot" style="background:${col}"></span>${esc(a.name)}<span style="color:#808080;margin-left:auto">${esc(textCopy(a.detail))}</span></div>`;
     }
     html+=moreRow(acts.length-SESSION_ROWS)+`</div>`;
