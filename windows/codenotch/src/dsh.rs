@@ -68,7 +68,12 @@ const MAX_SESSION_DIR_DEPTH: usize = 2;
 const MAX_DIRS: usize = 20_000;
 /// A transcript larger than this is not one session's conversation; it is refused rather than read.
 const MAX_TRANSCRIPT_BYTES: u64 = 256 * 1024 * 1024;
-const ZSTD_MAGIC: u32 = 0xFD2B_2F28;
+/// The four bytes every zstd frame opens with — `28 B5 2F FD` — read as the little-endian word the
+/// scan compares against. Written as one hex run rather than as reordered bytes because that is the
+/// form the format is specified in, and a transposed nibble here is not a compile error, not a
+/// visible fault, and not a failed test: it makes the scan find zero frames, so a provider with
+/// real transcripts on disk reports nothing at all while looking perfectly healthy.
+const ZSTD_MAGIC: u32 = 0xFD2F_B528;
 /// Days kept in the per-file cache: past this nothing is reported, so nothing needs keeping.
 const KEEP_DAYS: i32 = 31;
 
@@ -955,6 +960,53 @@ mod tests {
         assert_eq!(total_between(&days, 101, 102), 6);
         assert_eq!(total_between(&days, 100, 100), 1);
         assert_eq!(total_between(&days, 103, 104), 0);
+    }
+
+    /// The opening bytes of a real transcript, taken from
+    /// `~/.dsh/sessions/<project>/<session>/session.v3.jsonl.zstd` — **one frame per line**, in the
+    /// order the harness appended them. Two frames rather than one because the count is the whole
+    /// point: a transcript is a concatenation of frames, and a reader that stops at the first one
+    /// comes back with the 191-byte header of a 94 KB file.
+    const REAL_TRANSCRIPT_PREFIX: &str = "\
+28b52ffd0458c50400028b23205069ab0343d197ffe1939fa38decaf632c9635852259228366e7e59399da841e86056bf394791b9ddec73703cb5cf17c52da601b4718c6b24ff1c5d5e771f194b45e7f82b8f8b82081381720e05c224e2b02f4610d711c892d95da3aa437a1dff706faf84d4128a529d520436d3d418b4185d2520c31754894e47848171f806c7ee06386b1c4f8e8f41b096b8502003eb7685b9a0b82e407\
+28b52ffd0458550400f2c71a1c60a9da806e0c223492cd3acc7e2a08e2950ce3026b3b858b204bc003c57b6f3a8f2b202dcc59369c446c63ce01a2cc3e46620d0c945dbc7775ac45005d92bb691b1d3fe1d3257395246bad83a0088e8282e0f561eeeac01fb4afeeb4b5b1012deb664f533e5e59729f020b00516500db0165bb784b0b629f120636065470f1d230681662a6cc31c21835";
+
+    /// Read the fixture above. Kept as text rather than a `&[u8]` literal so the bytes stay in the
+    /// order they appear on disk, which is what makes them checkable against a hex dump.
+    fn hex(text: &str) -> Vec<u8> {
+        let digits: Vec<u8> = text.bytes().filter(|b| b.is_ascii_hexdigit()).collect();
+        digits
+            .chunks(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    /// The magic number is the one thing that has to be right for a transcript to be read at all.
+    /// Tying it to the literal the format defines is the assertion that catches a transcription
+    /// error in it, and no behavioural test can: a wrong constant makes every scan come back empty,
+    /// which is exactly what a machine with no sessions looks like too.
+    #[test]
+    fn the_magic_is_the_word_zstd_defines() {
+        assert_eq!(ZSTD_MAGIC, u32::from_le_bytes([0x28, 0xB5, 0x2F, 0xFD]));
+    }
+
+    /// Every appended frame must be located, and the records inside both must survive decoding.
+    #[test]
+    fn a_real_transcripts_frames_are_all_found_and_decoded() {
+        let bytes = hex(REAL_TRANSCRIPT_PREFIX);
+        assert_eq!(bytes.len(), 316, "the fixture is two frames");
+
+        let frames = scan_zstd_frames(&bytes);
+        assert_eq!(frames.len(), 2, "a scan must find every frame, not only the first");
+        assert_eq!(frames[0].0, 0);
+        assert_eq!(frames[1].1, bytes.len(), "the scan must run to the end of the last frame");
+
+        let text = decode_transcript(&bytes, true);
+        assert!(text.contains(r#""type":"session""#), "the header record is missing");
+        assert!(
+            text.contains(r#""type":"permission/preset""#),
+            "the record carried by the second frame is missing"
+        );
     }
 
     /// A frame boundary scan must not be fooled into reading a torn tail as a frame.
