@@ -1278,7 +1278,10 @@ function renderRing(){
     const h=headlineOf(p.snap,p.base);
     let inner=`<circle cx="28" cy="28" r="22" fill="${HOLE}"/><circle cx="28" cy="28" r="25" fill="none" stroke="${TRACK}" stroke-width="5"/>`;
     wrap.classList.toggle('pressed',!!refreshing[p.id]);
-    reading.innerHTML=h && h.count==null?svgArc(25,Math.min(h.used,1),tone(h.used),5):'';
+    // A count window and an unmetered one both leave the arc undrawn: the first has no denominator
+    // published, the second has none at all. Spelled out rather than left to `used` being zero, so a
+    // later change that gives such a window a value cannot quietly start drawing a ring from it.
+    reading.innerHTML=h && h.count==null && !h.unmetered?svgArc(25,Math.min(h.used,1),tone(h.used),5):'';
     if(weeklyRing!=='off'){ // the week, thinner and at its own radius, in its own colour: a session at 12% beside a week at 91% is the case this exists for
       const wk=weeklyOf(p.snap,p.base);
       // Inside, it shares the gap with the working indicator, so it stands down while that is showing
