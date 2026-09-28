@@ -198,10 +198,11 @@ pub struct ManualCredential {
 /// "saved" and "will be sent" can never disagree.
 pub fn read_credential() -> Option<ManualCredential> {
     let text = std::fs::read_to_string(credential_path()).ok()?;
-    let credential = serde_json::from_str::<ManualCredential>(&text).ok()?;
-    if credential.access_token.trim().is_empty() {
-        return None;
-    }
+    let mut credential = serde_json::from_str::<ManualCredential>(&text).ok()?;
+    // Normalised on the way in as well as on the way out, so the promise above holds for a file that
+    // was hand-edited as well as for one this program wrote: a token field holding the scheme and
+    // nothing else is no credential, not a credential named "Bearer".
+    credential.access_token = normalized_token(&credential.access_token)?;
     Some(credential)
 }
 
@@ -214,13 +215,17 @@ pub fn credential_saved() -> bool {
 /// A pasted token usually arrives the way it was copied out of a browser's network panel, scheme and
 /// all. Cleaning it here rather than refusing it matters: refusing would send the user back to copy
 /// the same string again with no idea which part was wrong.
+///
+/// The scheme is matched case-insensitively, because `Bearer` is not a case-sensitive word and
+/// somebody retyping it will not necessarily match the browser's spelling. And a value that turns
+/// out to be *only* a scheme carries no token, so it is refused rather than stored — the earlier
+/// version of this stripped the scheme literally and then re-checked emptiness, which left
+/// `"Bearer "` storing the word `Bearer` and sending it back as the credential.
 fn normalized_token(raw: &str) -> Option<String> {
-    let token = raw.trim().trim_start_matches("Bearer ").trim();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token.to_string())
-    }
+    let mut words = raw.split_whitespace();
+    let first = words.next()?;
+    let token = if first.eq_ignore_ascii_case("bearer") { words.next()? } else { first };
+    Some(token.to_string())
 }
 
 /// Writes the credential, and nothing else. Returns the state that was actually stored so the caller
@@ -236,7 +241,15 @@ pub fn save_credential(access_token: &str, enterprise_id: &str, user_id: &str) -
         account_type: if enterprise_id.trim().is_empty() { "personal".into() } else { "enterprise".into() },
     };
     let text = serde_json::to_string_pretty(&credential).map_err(|e| e.to_string())?;
-    std::fs::write(credential_path(), text).map_err(|e| e.to_string())?;
+    // The directory is the config's, and on a fresh install nothing has written there yet: the
+    // caches below only exist once the provider that owns them has something to cache, and a config
+    // is only written when a setting changes. Pasting a credential can be the very first thing a
+    // person does, so it creates the directory rather than assuming someone else did.
+    let path = credential_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
     request_refresh();
     Ok(())
 }
@@ -1178,8 +1191,19 @@ mod tests {
     fn a_pasted_token_is_cleaned_of_its_scheme_and_its_spacing() {
         assert_eq!(normalized_token("  Bearer abc123  ").as_deref(), Some("abc123"));
         assert_eq!(normalized_token("abc123").as_deref(), Some("abc123"));
+        // The scheme is a word, not a case-sensitive prefix: someone retyping it may not match the
+        // browser's spelling, and the token is unchanged either way.
+        assert_eq!(normalized_token("bearer abc123").as_deref(), Some("abc123"));
+        assert_eq!(normalized_token("BEARER abc123").as_deref(), Some("abc123"));
+        // A header value pasted out of a panel can carry the scheme's own separator rather than a space.
+        assert_eq!(normalized_token("Bearer\tabc123").as_deref(), Some("abc123"));
+        assert_eq!(normalized_token("Bearer\nabc123").as_deref(), Some("abc123"));
+        // Nothing to store. The scheme on its own is the case worth stating: keeping it would store
+        // the word "Bearer" as the credential and send it back as `Authorization: Bearer Bearer`.
         assert_eq!(normalized_token("   "), None);
+        assert_eq!(normalized_token("Bearer"), None);
         assert_eq!(normalized_token("Bearer "), None);
+        assert_eq!(normalized_token("bearer   "), None);
         assert_eq!(normalized_token(""), None);
     }
 
