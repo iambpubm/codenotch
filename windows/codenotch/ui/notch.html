@@ -387,13 +387,29 @@ function countCopy(w){
 // A spend figure. Small amounts need more precision than round ones do: a month of cache-heavy work
 // can come to a few cents, and "¥0.00" would read as nothing when the point is that it is cheap
 // rather than free.
+// The mark a currency prints under. DeepSeek quotes in CNY and USD and nothing else so far; an
+// unrecognised code falls back to the yuan rather than to a bare number, since the yuan is the
+// account's own currency and the rate card is quoted in it.
+function currencyMark(currency){ return currency==='USD'?'$':'¥'; }
 function money(v,currency){
   const n=Number(v);
   if(!isFinite(n)) return '';
-  const symbol=currency==='USD'?'$':'¥';
+  const symbol=currencyMark(currency);
   const size=Math.abs(n);
   if(size===0) return symbol+'0';
   return symbol+n.toFixed(size<0.01?3:2);
+}
+// A money balance in the pill, where the ring's own width is the budget: `¥40.29` measures wider
+// than the 44 px ring and would be cut at the screen edge. Three significant figures is the rule
+// `compactCount` already applies to a token figure, with the decimal kept below 100 — ¥40.3 and ¥403
+// are not the same account, and dropping the point would say they were.
+function compactMoney(v,currency){
+  const n=Number(v);
+  if(!isFinite(n)) return '';
+  const mark=currencyMark(currency), size=Math.abs(n);
+  if(size>=1000) return mark+compactCount(n);
+  if(size>=100) return mark+String(Math.round(n));
+  return mark+String(+n.toFixed(1));
 }
 // END TESTABLE COUNT FORMAT SELECTOR
 // What a window's usage works out to in money, when the provider's own history can be priced. The ≈
@@ -404,13 +420,19 @@ function costCopy(w,snap){
   const currency=(snap&&snap.cost&&snap.cost.currency)||'CNY';
   return `<span class="w-money">≈ ${money(w.cost,currency)}</span>`;
 }
+// The remainder written the way its unit is written. Money is money — `¥40.29`, not `40.29 CNY` —
+// and everything else names its unit, so a count of credits and a sum of money never read alike.
+function remainderCopy(w){
+  const unit=String(w.unit||'');
+  if(unit==='CNY'||unit==='USD') return money(w.remaining,unit);
+  return thousands(w.remaining)+' '+textCopy(unit==='credits'?'Credits':unit);
+}
 // What a ring cannot say. A meter at 13.5 % is the same picture at 173,000 credits and at 1,730,000,
 // so when the provider published the absolute figure it gets a line of its own. Empty when there is
 // none, because an invented remainder would be worse than the silence.
 function leftCopy(w){
   if(w.remaining==null) return '';
-  const unit=textCopy(w.unit==='credits'?'Credits':String(w.unit||''));
-  return `<div class="w-left">${esc(ui().leftOf(thousands(w.remaining),unit))}</div>`;
+  return `<div class="w-left">${esc(ui().leftOf(remainderCopy(w)))}</div>`;
 }
 // Both ends, since vendors disagree on which they print; the left half comes from the rounded used half, as their dashboards do
 function usedCopy(w){
@@ -473,6 +495,7 @@ let uiLang='en';
 // showing half a translation, so adding one is only ever data.
 const TEXT={
   ko:{
+    'Balance':'잔액',
     'Included usage':'포함 사용량',
     'API usage':'API 사용량',
     'On demand':'온디맨드',
@@ -533,6 +556,7 @@ const TEXT={
     'Rate limited. Wait for the retry deadline.':'요청이 제한되었습니다. 재시도 시점까지 기다리십시오.',
   },
   'pt-BR':{
+    'Balance':'Saldo',
     'Included usage':'Uso incluído',
     'Refresh':'Atualizar',
     'Complete sign-in in the browser or terminal window.':'Conclua o login no navegador ou na janela do terminal.',
@@ -596,6 +620,7 @@ const TEXT={
     'Working in':'Em execução em'
   },
   uk:{
+    'Balance':'Баланс',
     'Included usage':'Використання в тарифі',
     'API usage':'Використання API',
     'On demand':'За потребою',
@@ -650,6 +675,7 @@ const TEXT={
     'Working in':'Працює в'
   },
   ru:{
+    'Balance':'Баланс',
     'Included usage':'Включённое использование',
     'Complete sign-in in the browser or terminal window.':'Подтвердите вход в браузере или окне терминала.',
     'Sign-in complete. Refreshing usage...':'Вход выполнен. Обновляю лимиты…',
@@ -707,6 +733,7 @@ const TEXT={
     'Working in':'Работает в'
   },
   zh:{
+    'Balance':'余额',
     'Included usage':'包含用量',
     'API usage':'API 用量',
     'On demand':'按需用量',
@@ -761,6 +788,7 @@ const TEXT={
     'Working in':'工作于',
   },
   'zh-Hant':{
+    'Balance':'餘額',
     'Included usage':'包含用量',
     'API usage':'API 用量',
     'On demand':'按需用量',
@@ -1073,37 +1101,37 @@ const UI={
       resetsAt:t=>`${t}에 재설정`,resetsOn:(d,t)=>`${d} ${t}에 재설정`,resetsDate:d=>`${d}에 재설정`,
       ago:m=>m<60?`${m}분 전`:`${Math.round(m/60)}시간 전`,
       usedLeft:(used,left)=>`${used}% 사용 · ${left}% 남음`,andMore:n=>`외 ${n}개`,updated:a=>`${a}에 마지막 업데이트됨`,
-      leftOf:(n,u)=>`${u} ${n} 남음`},
+      leftOf:t=>`${t} 남음`},
   'pt-BR':{locale:'pt-BR',title:n=>'Uso do '+n,resetting:'Renovando…',resetsIn:m=>`Renova em ${m} min`,
       resetsAt:t=>`Renova às ${t}`,resetsOn:(d,t)=>`Renova ${d} às ${t}`,resetsDate:d=>`Renova ${d}`,
       ago:m=>m<60?`há ${m} min`:`há ${Math.round(m/60)} h`,
       usedLeft:(used,left)=>`${used}% usado · ${left}% restante`,andMore:n=>`e mais ${n}`,
-      leftOf:(n,u)=>`${n} ${u} restantes`},
+      leftOf:t=>`${t} restantes`},
   en:{locale:'en-US',title:n=>n+' Usage',resetting:'Resetting…',resetsIn:m=>`Resets in ${m} min`,
       resetsAt:t=>`Resets at ${t}`,resetsOn:(d,t)=>`Resets ${d} ${t}`,resetsDate:d=>`Resets ${d}`,
       ago:m=>m<60?`${m}m ago`:`${Math.round(m/60)}h ago`,
       usedLeft:(used,left)=>`${used}% Used · ${left}% left`,andMore:n=>`and ${n} more`,updated:a=>`Updated ${a}`,
-      leftOf:(n,u)=>`${n} ${u} left`},
+      leftOf:t=>`${t} left`},
   uk:{locale:'uk-UA',title:n=>'Використання '+n,resetting:'Скидання…',resetsIn:m=>`Скидання через ${m} хв`,
       resetsAt:t=>`Скидання о ${t}`,resetsOn:(d,t)=>`Скидання: ${d} ${t}`,resetsDate:d=>`Скидання: ${d}`,
       ago:m=>m<60?`${m} хв тому`:`${Math.round(m/60)} год тому`,
       usedLeft:(used,left)=>`Використано ${used}% · лишилось ${left}%`,andMore:n=>`і ще ${n}`,updated:a=>`Оновлено ${a}`,
-      leftOf:(n,u)=>`залишилось ${n} ${u}`},
+      leftOf:t=>`залишилось ${t}`},
   ru:{locale:'ru-RU',title:n=>'Использование '+n,resetting:'Сброс…',resetsIn:m=>`Сброс через ${m} мин`,
       resetsAt:t=>`Сброс в ${t}`,resetsOn:(d,t)=>`Сброс: ${d} ${t}`,resetsDate:d=>`Сброс: ${d}`,
       ago:m=>m<60?`${m} мин назад`:`${Math.round(m/60)} ч назад`,
       usedLeft:(used,left)=>`Использовано ${used}% · осталось ${left}%`,andMore:n=>`и ещё ${n}`,updated:a=>`Обновлено ${a}`,
-      leftOf:(n,u)=>`осталось ${n} ${u}`},
+      leftOf:t=>`осталось ${t}`},
   zh:{locale:'zh-CN',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分钟后重置`,
       resetsAt:t=>`${t} 重置`,resetsOn:(d,t)=>`${d} ${t} 重置`,resetsDate:d=>`${d} 重置`,
       ago:m=>m<60?`${m} 分钟前`:`${Math.round(m/60)} 小时前`,
       usedLeft:(used,left)=>`已用 ${used}% · 剩余 ${left}%`,andMore:n=>`另有 ${n} 个`,updated:a=>`更新于 ${a}`,
-      leftOf:(n,u)=>`剩余 ${n} ${u}`},
+      leftOf:t=>`剩余 ${t}`},
   'zh-Hant':{locale:'zh-TW',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分鐘後重置`,
       resetsAt:t=>`${t} 重置`,resetsOn:(d,t)=>`${d} ${t} 重置`,resetsDate:d=>`${d} 重置`,
       ago:m=>m<60?`${m} 分鐘前`:`${Math.round(m/60)} 小時前`,
       usedLeft:(used,left)=>`已用 ${used}% · 剩餘 ${left}%`,andMore:n=>`另有 ${n} 個`,updated:a=>`更新於 ${a}`,
-      leftOf:(n,u)=>`剩餘 ${n} ${u}`},
+      leftOf:t=>`剩餘 ${t}`},
 };
 function ui(){return UI[uiLang]||UI.en;}
 function textCopy(value){
@@ -1202,7 +1230,8 @@ function headlineOf(snap,id){
 // tokens are counted over their own spans rather than against a weekly allowance.
 // BEGIN TESTABLE WEEKLY SELECTOR
 function weeklyOf(snap,id){
-  const ws=snap.windows.filter(w=>w.count==null); if(!ws.length) return null;
+  // A window with no denominator has no weekly reading to give, so it is not a candidate here either.
+  const ws=snap.windows.filter(w=>w.count==null&&!w.unmetered); if(!ws.length) return null;
   const byId=x=>ws.find(w=>w.id===x)||null;
   if(id==='workbuddy') return null; // a balance and running token counts, never a weekly window
   if(id==='codex') return byId('secondary');
@@ -1270,6 +1299,8 @@ function renderRing(){
     }
     if(p.snap.status==='needsAuth'||p.snap.status==='none') pct.textContent='—';
     else if(h && h.count!=null) pct.textContent='~'+compactCount(h.count);
+    // A balance with no denominator: the figure belongs in the pill, the percentage does not exist.
+    else if(h && h.unmetered) pct.textContent=h.remaining!=null?compactMoney(h.remaining,h.unit):'—';
     else if(h) pct.textContent=(h.derived?'~':'')+pctText(h.used)+'%';
     else pct.textContent=p.snap.windows.length?'—':'…'; // its declared window is missing: a dash, not a wait
     glyph.classList.toggle('dim', !!(h && h.used>=1));
@@ -1339,6 +1370,14 @@ function renderCard(){
         // line rather than claiming a row of its own: it is the same measurement in another unit.
         html+=`<div class="win"><div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span></div>
           <div class="w-used">${countCopy(w)}${costCopy(w,snap)}</div></div>`;
+        continue;
+      }
+      // A window with a remainder but no denominator — a money balance with no top-up figure to
+      // divide by. It gets no track and no percentage: the ring would be a fraction of nothing, and a
+      // 0 % arc over a full account is a claim rather than a blank. The remainder is the reading.
+      if(w.unmetered){
+        html+=`<div class="win"><div class="w-row"><span class="w-label">${esc(textCopy(w.label))}</span></div>
+          ${leftCopy(w)}</div>`;
         continue;
       }
       html+=`<div class="win">

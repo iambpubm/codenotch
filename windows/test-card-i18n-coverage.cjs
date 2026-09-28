@@ -83,3 +83,42 @@ test('The breakdown is summed from the rows above it', () => {
   assert.ok(/const parts=\(snap\.cost\.parts\|\|\[\]\)\.filter\(p=>p\.tokens>0\);/.test(notch),
     'the breakdown must filter out the kinds with no tokens');
 });
+
+test('Every card language can name the balance window it draws', () => {
+  // DeepSeek's balance arrives as a window labelled "Balance". A table without the key would print
+  // the English word in the middle of an otherwise translated card, and nothing reports it.
+  for (const lang of CARD_LANGS) {
+    const table = block(notch, `\n  ${lang}:{\n`, '\n  },');
+    assert.ok(table.includes("'Balance'"), `the ${lang} TEXT table has no 'Balance'`);
+  }
+});
+
+test('Every settings language can label the DeepSeek key row', () => {
+  const names = ['PT_BR', 'RU', 'ZH', 'ZH_HANT', 'JA', 'KO', 'UK'];
+  for (const name of names) {
+    const table = block(settings, `const ${name}_STATIC = {\n`, '\n};\n');
+    for (const key of ["'DeepSeek API key'", "'Paste the API key'", "'Paid in so far (optional)'",
+      "'Key saved", "'Key read from the DeepSeek Harness", "'Key read from DEEPSEEK_API_KEY",
+      "'No DeepSeek key found", "'Paid in so far is optional", "'Paid in so far has to be a number'"]) {
+      assert.ok(table.includes(key), `the ${name} table has no ${key}`);
+    }
+  }
+});
+
+test('A remainder in money is written as money', () => {
+  // The line used to read `40.29 CNY left`, which is a number with a currency code after it. A sum of
+  // money is written as one, so the currency never goes through the unit-word lookup.
+  assert.ok(/if\(unit==='CNY'\|\|unit==='USD'\) return money\(w\.remaining,unit\);/.test(notch),
+    'a money remainder must go through money() rather than the unit text');
+});
+
+test('A window with no denominator draws no ring', () => {
+  // The balance case: a 0 % arc over a full account is a picture of something untrue rather than a
+  // missing picture, so the card gives it a line and leaves the ring alone — in the pill too, and in
+  // the weekly selector, which must not mistake it for a weekly window.
+  assert.ok(/if\(w\.unmetered\)\{/.test(notch), 'the card must branch on unmetered');
+  assert.ok(/else if\(h && h\.unmetered\) pct\.textContent/.test(notch),
+    'the pill must not print a percentage for a window that has none');
+  assert.ok(/filter\(w=>w\.count==null&&!w\.unmetered\)/.test(notch),
+    'an unmetered window must not be read as a weekly one');
+});

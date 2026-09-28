@@ -59,6 +59,14 @@ pub struct LimitWindow {
     /// to — a card that showed one number for three different spans would be lying about two of them.
     #[serde(default)]
     pub cost: Option<f64>,
+    /// There is a remainder but no denominator to divide it by, so `used` means nothing and the ring
+    /// must not be drawn from it. A money balance with no stated top-up is the case this exists for:
+    /// the vendor publishes what is left and never what went in, and a 0 % arc over a full account is
+    /// a picture of something untrue rather than a missing picture. Defaults to false so every
+    /// window written before this field existed keeps drawing the ring it always did — they all had
+    /// a denominator, which is why they were drawn at all.
+    #[serde(default)]
+    pub unmetered: bool,
 }
 
 /// One kind of token, and what it cost. Kept apart rather than summed because the vendor prices them

@@ -14,6 +14,7 @@ mod workbuddy_tokens;
 mod codex;
 mod cursor;
 mod dsh;
+mod deepseek;
 mod antigravity;
 mod glm;
 mod opencode;
@@ -1221,8 +1222,10 @@ fn ring_window<'a>(
         "codex" => by_id("primary"),
         "cursor" => by_id("included").or_else(|| by_id("api")),
         // DeepSeek Harness publishes counts, not fractions: the day window leads the ring, and a
-        // count window keeps its track undrawn either way (see ring_fraction).
-        "dsh" => by_id("today").or_else(|| windows.first()),
+        // count window keeps its track undrawn either way (see ring_fraction). The balance it also
+        // reports is passed over here whatever its position — with no top-up figure to divide by it
+        // has no fraction either, and a ring is not what it is for.
+        "dsh" => by_id("today").or_else(|| windows.iter().find(|w| !w.unmetered)),
         // The Mac sets headlineID "session", weeklyID "weekly". Without this the
         // plan falls through to Antigravity's lane picker and the ring shows the
         // tightest window it can find instead of the session.
@@ -1303,7 +1306,9 @@ pub(crate) fn ring_fraction(app: &AppHandle, provider: &str) -> Option<f64> {
         (c.antigravity_limit.clone(), c.antigravity_model.clone())
     };
     ring_window(provider, &snap.windows, &limit, &model)
-        .filter(|w| w.count.is_none())
+        // A window with no denominator has no fraction to hand back: `unmetered` is the balance
+        // case, and a 0 % ring over a full account would be a claim rather than an absence.
+        .filter(|w| w.count.is_none() && !w.unmetered)
         .map(|w| w.used.clamp(0.0, 1.0))
 }
 
@@ -1318,7 +1323,9 @@ pub(crate) fn ring_pct(app: &AppHandle, provider: &str) -> Option<u32> {
         (c.antigravity_limit.clone(), c.antigravity_model.clone())
     };
     ring_window(provider, &snap.windows, &limit, &model)
-        .filter(|w| w.count.is_none())
+        // A window with no denominator has no fraction to hand back: `unmetered` is the balance
+        // case, and a 0 % ring over a full account would be a claim rather than an absence.
+        .filter(|w| w.count.is_none() && !w.unmetered)
         .map(|w| (w.used * 100.0).round().clamp(0.0, 100.0) as u32)
 }
 
@@ -1329,9 +1336,11 @@ struct TrayOption {
     label: String,
     status: String,
     used: Option<u32>,
-    /// Whether a credential the user pasted is stored for this provider. WorkBuddy is the only
-    /// provider with that route today — its own app seals the session — and every other provider
-    /// answers false rather than leaving the field out, so the settings page renders one shape.
+    /// Whether a credential the user pasted is stored for this provider. Two providers have that
+    /// route: WorkBuddy, whose own app seals the session so nothing else can read it, and DeepSeek,
+    /// whose key the app can usually find on its own but which a pasted one outranks. Every other
+    /// provider answers false rather than leaving the field out, so the settings page renders one
+    /// shape.
     credential: bool,
 }
 
@@ -1344,7 +1353,8 @@ fn get_tray_options(app: AppHandle) -> Vec<TrayOption> {
             label: provider_label(id).to_string(),
             status: snapshot_of(&app, id).status,
             used: ring_pct(&app, id),
-            credential: *id == "workbuddy" && workbuddy::credential_saved(),
+            credential: (*id == "workbuddy" && workbuddy::credential_saved())
+                || (*id == "dsh" && deepseek::credential_saved()),
         })
         .collect()
 }
@@ -1432,6 +1442,59 @@ fn set_workbuddy_credential(
 fn clear_workbuddy_credential() -> Result<WorkbuddyCredentialState, String> {
     workbuddy::forget_credential()?;
     Ok(workbuddy_credential_state())
+}
+
+/// What the settings page is told about the DeepSeek key. `source` is how the balance is being read
+/// right now — the harness's own file, the environment, a pasted key, or nothing at all — because
+/// "there is no key here" and "the key is coming from somewhere you did not put it" are different
+/// situations and the page has one line to say which it is in.
+#[derive(serde::Serialize)]
+struct DeepseekCredentialState {
+    saved: bool,
+    /// Where the key in use came from: "pasted", "harness", "environment" or "".
+    source: String,
+    /// Whether a key can be used at all right now, from any source.
+    available: bool,
+    /// The top-up figure stored beside it, if one was.
+    topup_total: Option<f64>,
+}
+
+fn deepseek_credential_state() -> DeepseekCredentialState {
+    let source = match deepseek::resolved_key().map(|(_, s)| s) {
+        Some(deepseek::Source::Pasted) => "pasted",
+        Some(deepseek::Source::Harness) => "harness",
+        Some(deepseek::Source::Environment) => "environment",
+        None => "",
+    };
+    DeepseekCredentialState {
+        saved: deepseek::credential_saved(),
+        source: source.to_string(),
+        available: !source.is_empty(),
+        topup_total: deepseek::topup_total(),
+    }
+}
+
+#[tauri::command]
+fn get_deepseek_credential() -> DeepseekCredentialState {
+    deepseek_credential_state()
+}
+
+/// Stores a pasted API key and/or a top-up figure, and asks the provider to re-read at once so the
+/// balance appears without waiting out the poll interval.
+///
+/// A missing key is an omission and keeps the stored one — on a machine where the harness supplies
+/// the key, the top-up is the only thing there is to fill in. An empty string is a mistake and is
+/// refused. Clearing has its own command, so neither reading can throw away a working key.
+#[tauri::command]
+fn set_deepseek_credential(api_key: Option<String>, topup_total: Option<f64>) -> Result<DeepseekCredentialState, String> {
+    deepseek::save_credential(api_key.as_deref(), topup_total)?;
+    Ok(deepseek_credential_state())
+}
+
+#[tauri::command]
+fn clear_deepseek_credential() -> Result<DeepseekCredentialState, String> {
+    deepseek::forget_credential()?;
+    Ok(deepseek_credential_state())
 }
 
 /// Which providers get a ring on the notch. An empty list means every provider.
@@ -1910,6 +1973,9 @@ fn main() {
             get_workbuddy_credential,
             set_workbuddy_credential,
             clear_workbuddy_credential,
+            get_deepseek_credential,
+            set_deepseek_credential,
+            clear_deepseek_credential,
             get_app_icon,
             get_ui_flags,
             set_ui_flags,

@@ -173,11 +173,11 @@ file that holds them.
 
 ### DeepSeek Harness sessions
 
-Nothing to sign in to and nothing to configure. Its sessions live under `$DSH_HOME`, or
-`~/.dsh` when that is unset — one directory per project, one per session inside it, holding
-`session.jsonl`, or `session.v3.jsonl` when a generation has rewritten the format, with a
-`.zstd` suffix where the writer compresses. Only those names are read: a
-`session.summary.jsonl` or a `.bak` beside them is not a transcript.
+Nothing to sign in to, and for the transcripts nothing to configure either. Its sessions live under
+`$DSH_HOME`, or `~/.dsh` when that is unset — one directory per project, one per session inside it,
+holding `session.jsonl`, or `session.v3.jsonl` when a generation has rewritten the format, with a
+`.zstd` suffix where the writer compresses. Only those names are read: a `session.summary.jsonl` or
+a `.bak` beside them is not a transcript.
 
 The three windows are counts, not shares: tokens today, in the last seven days and in the
 last thirty. There is no allowance to divide by, so the ring draws its track undrawn and the
@@ -212,14 +212,57 @@ A transcript the writer is midway through looks truncated, and that is normal: t
 appends one Zstandard frame per flush, so frame boundaries are located without decompressing
 the file and only the half-written frame at the cut is dropped.
 
+#### The balance, which is not an estimate
+
+`GET /user/balance` is the one vendor figure this app states rather than works out. Unlike
+WorkBuddy's it needs no ceremony to reach: the key is a DeepSeek platform key, nothing seals it,
+and the harness keeps it in the clear in `$DSH_HOME/.credentials.yaml` under `refs.DEEPSEEK_API_KEY`
+— so on a machine that has run the harness there is nothing to paste. Where there is no harness, the
+key field under **Settings → Accounts → DeepSeek Harness** takes one, and a key can be minted on the
+platform in a minute.
+
+The key is looked for in this order, and a pasted one wins:
+
+1. `%APPDATA%\codenotch\deepseek-credential.json` — a pasted key, written by this app and sent
+   nowhere but `api.deepseek.com`. Its own file rather than a field in `config.json`, for the same
+   reason WorkBuddy's credential has one.
+2. `DEEPSEEK_API_KEY` in the environment.
+3. `refs.DEEPSEEK_API_KEY` in the harness's own credentials file.
+
+A pasted key outranking the others is deliberate. It is the one the person chose, and if the
+endpoint is refusing it, falling back quietly would report a balance from an account they did not
+mean. The card says the key was refused instead.
+
+**Why there is a top-up figure as well, and why it is optional.** The endpoint publishes what is
+left and says nothing about what was put in, so a remainder on its own contains no percentage — and
+a `0 %` ring over a full account is a picture of something untrue rather than a missing picture. The
+card therefore prints the remainder as a figure and draws no ring at all, and *Paid in so far* is
+what turns it into a fraction: supply it and the ring means "used this much of what you have paid
+in"; leave it blank and the figure stands alone. It is deliberately not inferred from anything,
+because there is no transaction history to read and a guessed denominator would put a
+confident-looking arc under a number nobody could check.
+
+Two details worth knowing:
+
+- **The endpoint quotes its balances as strings** (`"total_balance": "40.29"`). That is its own
+  documented shape rather than a mistake to route around. A document with no currency in it at all
+  is reported as unreadable instead of becoming a `¥0`.
+- **An account holding several currencies shows CNY**, falling back to the first entry. CNY is the
+  account's home currency and the one the rate card is quoted in.
+
+A request that fails keeps the last figure that was read rather than emptying the row: the token
+counts beside it are local and always answer, so a balance blinking out would read as the account
+having been drained rather than as one call having failed.
+
 #### What those tokens came to
 
 DeepSeek publishes no usage or billing endpoint — its API reference offers `GET /user/balance`
-and `GET /models` and nothing else — so there is no way to ask what a month cost, and nothing to
-sign into. The figure on the card is therefore **our own estimate, and says so**: the tokens
-already counted above, multiplied by DeepSeek's published rate card, converted to CNY. The
-30-day total appears in full under the count rows on the hover card, broken into cache-hit
-input, cache-miss input and output, with the three token counts beside their own share.
+and `GET /models` and nothing else — so there is no way to ask what *a month cost*. What is left on
+the account is a different question, and that one is answered exactly, above. So the figure here is
+**our own estimate, and says so**: the tokens already counted above, multiplied by DeepSeek's
+published rate card, converted to CNY. The 30-day total appears in full under the count rows on the
+hover card, broken into cache-hit input, cache-miss input and output, with the three token counts
+beside their own share.
 
 The rate card is read from the vendor's *Models & Pricing* page and comes in four rows, in CNY
 per million tokens:

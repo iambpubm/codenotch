@@ -214,7 +214,11 @@ pub fn sessions_root() -> Option<PathBuf> {
 }
 
 pub fn present() -> bool {
-    sessions_root().map(|p| p.is_dir()).unwrap_or(false)
+    // A key is enough on its own. The balance comes from DeepSeek's own endpoint and needs no
+    // transcript, so a machine that has DeepSeek set up but has not run the harness yet still has
+    // something true to show — and that is the case where the balance is the *only* thing there is.
+    // Without a key the harness's session tree is the whole of the reading.
+    sessions_root().map(|p| p.is_dir()).unwrap_or(false) || crate::deepseek::key_available()
 }
 
 // ---------------- transcript discovery ----------------
@@ -896,6 +900,20 @@ fn cost_estimate(q: &Quote) -> CostEstimate {
     }
 }
 
+/// The account balance, read from the vendor, or the last one that could be read.
+///
+/// A request that fails must not empty a figure that was correct a minute ago: the token totals
+/// beside it are local and always answer, so a balance blinking out would read as the account having
+/// been drained rather than as one call having failed. The previous window is therefore the fallback,
+/// and only a machine that has never read a balance shows none.
+fn balance_window(prev: &UsageSnapshot) -> Option<LimitWindow> {
+    let (key, _) = crate::deepseek::resolved_key()?;
+    match crate::deepseek::fetch(&key) {
+        Ok(balance) => Some(crate::deepseek::window(&balance, crate::deepseek::topup_total())),
+        Err(_) => prev.windows.iter().find(|w| w.id == "balance").cloned(),
+    }
+}
+
 fn read_once(prev: &UsageSnapshot, cache: &mut TotalsCache) -> UsageSnapshot {
     let mut snap = prev.clone();
     if !present() {
@@ -904,10 +922,16 @@ fn read_once(prev: &UsageSnapshot, cache: &mut TotalsCache) -> UsageSnapshot {
     let (days, file_count) = scan(cache);
     save_cache(cache);
 
+    let balance = balance_window(prev);
+
     if file_count == 0 {
-        snap.status = "none".into();
-        snap.windows.clear();
+        // No transcript here. The balance alone is still a reading — money is money whether or not
+        // the harness has been run — but with nothing to price there is no money block to show.
+        let alone = balance.is_some();
+        snap.windows = balance.into_iter().collect();
         snap.cost = None;
+        snap.fetched_at = now_ms();
+        snap.status = if alone { "ok".into() } else { "none".into() };
         snap.note = "No DeepSeek Harness session has run yet".into();
         return snap;
     }
@@ -923,9 +947,11 @@ fn read_once(prev: &UsageSnapshot, cache: &mut TotalsCache) -> UsageSnapshot {
     snap.status = "ok".into();
     snap.fetched_at = now_ms();
     snap.note.clear();
-    // "Today" is always present, so the ring always means the same thing; the wider windows only
-    // appear once they have something in them.
-    let mut windows = vec![count_window("today", "Today", today_tokens, today_quote.total)];
+    // The balance leads: it is money, and it is the only figure here that came from the vendor
+    // rather than from this machine's own arithmetic. "Today" is always present, so the ring always
+    // means the same thing; the wider windows only appear once they have something in them.
+    let mut windows: Vec<LimitWindow> = balance.into_iter().collect();
+    windows.push(count_window("today", "Today", today_tokens, today_quote.total));
     if week_tokens > 0 {
         windows.push(count_window("week", "Last 7 days", week_tokens, week_quote.total));
     }
@@ -986,8 +1012,13 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// For doctor: where the transcript tree is, and what today has cost.
+/// For doctor: where the transcript tree is, what today has cost, and what the account holds.
 pub fn probe() -> String {
+    let transcripts = transcript_probe();
+    format!("{}\n{}", transcripts, crate::deepseek::probe())
+}
+
+fn transcript_probe() -> String {
     let Some(home) = home() else { return "DeepSeek Harness: no home directory to look under".into() };
     let Some(root) = sessions_root() else { return "DeepSeek Harness: no home directory to look under".into() };
     if !root.is_dir() {

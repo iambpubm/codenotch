@@ -26,7 +26,7 @@ function markedSource(document, name) {
 }
 const context = vm.createContext({ textCopy: (s) => s }); // the page's wording lookup, as the identity
 vm.runInContext(markedSource(html, 'COUNT FORMAT'), context);
-const { compactCount, thousands, countCopy, money } = context;
+const { compactCount, thousands, countCopy, money, compactMoney } = context;
 const pill = (n) => '~' + compactCount(n);
 
 test('Counts below a thousand are printed whole', () => {
@@ -123,4 +123,30 @@ test('No amount prints as a figure it is not', () => {
   assert.equal(money(NaN, 'CNY'), '');
   assert.equal(money(undefined, 'CNY'), '');
   assert.equal(money(null, 'CNY'), '¥0');
+});
+
+test('A balance in the pill is shortened to the ring it sits beside', () => {
+  // Same budget as a token count and the same rule — three significant figures — with the decimal
+  // kept below a hundred, because ¥40.3 and ¥403 are not the same account and dropping the point
+  // would say they were. Past a hundred yuan the point is noise; past a thousand there is no room.
+  assert.equal(compactMoney(40.29, 'CNY'), '¥40.3');
+  assert.equal(compactMoney(5, 'CNY'), '¥5');
+  assert.equal(compactMoney(0.5, 'CNY'), '¥0.5');
+  assert.equal(compactMoney(99.94, 'CNY'), '¥99.9');
+  assert.equal(compactMoney(123.6, 'CNY'), '¥124');
+  assert.equal(compactMoney(1234.5, 'CNY'), '¥1.23K');
+  assert.equal(compactMoney(1.5, 'USD'), '$1.5');
+  // No balance at all stays silent rather than printing a mark with nothing after it.
+  assert.equal(compactMoney(NaN, 'CNY'), '');
+  assert.equal(compactMoney(undefined, 'CNY'), '');
+});
+
+test('A balance in the pill keeps to the same width budget as a count', () => {
+  const body = Number(html.match(/#pill\{[^}]*?width:(\d+)px/)[1]);
+  const size = Number(html.match(/\.pct\{font-size:(\d+)px/)[1]);
+  const amounts = [0, 0.5, 5, 40.29, 123.6, 999.9, 1000, 1234.5, 1583864, 1583864000];
+  const widest = Math.max(...amounts.map((n) => compactMoney(n, 'CNY').length));
+  const needed = widest * size * 0.62;
+  assert.ok(needed < body,
+    `widest balance is ${widest} chars (${needed.toFixed(0)}px) but the pill body is ${body}px`);
 });
