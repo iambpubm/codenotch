@@ -407,7 +407,10 @@ mod tests {
     #[test]
     fn the_snapshot_time_is_read_off_the_payload() {
         let brain = parse(&payload_with_detail(), 1000).unwrap();
-        assert_eq!(brain.at, 1_787_003_159_820);
+        // The fixture's stamp is 2026-09-29T00:25:59.820Z, and this is that instant in ms.
+        // Not worked out by hand: the first version of this literal was 42 days out, which is
+        // exactly what hand-computed epochs are for.
+        assert_eq!(brain.at, 1_790_641_559_820);
         assert_eq!(brain.read_at, 1000);
 
         let mut broken = payload_with_detail();
