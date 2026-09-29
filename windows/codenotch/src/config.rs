@@ -114,6 +114,15 @@ pub struct Config {
     /// (backdrop.rs). Opt-in for that reason; off, the pill takes Theme's colour.
     #[serde(default)]
     pub adaptive_pill: bool,
+    /// The CyberBrain workbench's account id, used to read the stats snapshot it publishes
+    /// (`cyberbrain.rs`). Empty means the business rings are not drawn at all.
+    ///
+    /// It lives in the user's config rather than in this file on purpose. The `getStats` op is
+    /// unauthenticated — knowing the id is enough to read the snapshot — so the id works like a
+    /// password to the workbench's counts, and to the titles and dates in the details. A value
+    /// compiled into a public repository would hand all of that to anyone who reads the source.
+    #[serde(default)]
+    pub brain_uid: String,
 }
 
 fn default_notch_y() -> f64 {
@@ -268,6 +277,7 @@ impl Default for Config {
             tray_visible: true,
             show_move_handle: true,
             adaptive_pill: false,
+            brain_uid: String::new(),
         }
     }
 }

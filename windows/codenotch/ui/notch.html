@@ -91,6 +91,25 @@
   /* nowrap so an unexpectedly long reading cannot fold the pill into two lines; `compactCount` keeps it
      inside the 70 px body, so this never actually hides anything. */
   .pct{font-size:15px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* The business group: the workbench's three counts, told apart from the providers by a hairline.
+     The pill is a column, so the separator is a rule across its width — a plain gap would read as
+     "one more provider", which is exactly what these three are not. */
+  .sep{width:calc(var(--ring) - 14px);height:1px;background:var(--ink-dim);opacity:.4}
+  /* A count has no denominator, so the ring is a frame around the number rather than a filled arc.
+     The number is sized by how many characters it has: `compactCount` caps that at five, and five
+     would not fit the ring at the size three does. */
+  .bnum{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.5px;
+    font-size:calc(19px * var(--k))}
+  .bnum.w2{font-size:calc(15.5px * var(--k))}
+  .bnum.w3{font-size:calc(12.5px * var(--k))}
+  /* Rows on the workbench card. The date carries its own weight: a past one is drawn in the same red
+     as the count above it, so "late" is a colour rather than a phrase that would need translating. */
+  .s-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+  .s-meta{flex:none;color:var(--ink-dim);white-space:nowrap}
+  .s-meta.late{color:var(--crit)}
+  .c-count{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
   .dim{opacity:.55}
   /* A stale reading dims the reading only. The track, the week and the glyph are all saying the same
      old thing, but whether an agent is running right now is current either way, so the activity arc
@@ -495,6 +514,9 @@ let uiLang='en';
 // showing half a translation, so adding one is only ever data.
 const TEXT={
   ko:{
+    'Todos':'할 일',
+    'Overdue':'기한 초과',
+    'Due soon':'곧 마감',
     'Balance':'잔액',
     'Included usage':'포함 사용량',
     'API usage':'API 사용량',
@@ -557,6 +579,9 @@ const TEXT={
     'Rate limited. Wait for the retry deadline.':'요청이 제한되었습니다. 재시도 시점까지 기다리십시오.',
   },
   'pt-BR':{
+    'Todos':'Tarefas',
+    'Overdue':'Atrasados',
+    'Due soon':'Vencem em breve',
     'Balance':'Saldo',
     'Included usage':'Uso incluído',
     'Refresh':'Atualizar',
@@ -622,6 +647,9 @@ const TEXT={
     'Working in':'Em execução em'
   },
   uk:{
+    'Todos':'Справи',
+    'Overdue':'Прострочено',
+    'Due soon':'Скоро термін',
     'Balance':'Баланс',
     'Included usage':'Використання в тарифі',
     'API usage':'Використання API',
@@ -678,6 +706,9 @@ const TEXT={
     'Working in':'Працює в'
   },
   ru:{
+    'Todos':'Дела',
+    'Overdue':'Просрочено',
+    'Due soon':'Скоро срок',
     'Balance':'Баланс',
     'Included usage':'Включённое использование',
     'Complete sign-in in the browser or terminal window.':'Подтвердите вход в браузере или окне терминала.',
@@ -737,6 +768,9 @@ const TEXT={
     'Working in':'Работает в'
   },
   zh:{
+    'Todos':'待办',
+    'Overdue':'超时',
+    'Due soon':'预警',
     'Balance':'余额',
     'Included usage':'包含用量',
     'API usage':'API 用量',
@@ -793,6 +827,9 @@ const TEXT={
     'Working in':'工作于',
   },
   'zh-Hant':{
+    'Todos':'待辦',
+    'Overdue':'超時',
+    'Due soon':'預警',
     'Balance':'餘額',
     'Included usage':'包含用量',
     'API usage':'API 用量',
@@ -1183,6 +1220,11 @@ function glyphHtml(p,small){
 // Provider table (order = top to bottom in the pill). `glyph` is the fallback letter used when no mark is available
 // Which providers get a ring: [{provider}]. null or an empty list means every provider.
 let notchSlots=null;
+// The workbench's business counts, read from the snapshot it publishes (see src/cyberbrain.rs).
+// Same status vocabulary as the provider readings: ok | stale | none | error. `none` means no
+// workbench id is configured, and then no business ring is drawn at all — an empty group and an
+// unconfigured one are different things and only one of them should be on screen.
+let brain={status:'none',due:{count:0,items:[],cut:false},over:{count:0,items:[],cut:false},soon:{count:0,items:[],cut:false},progress:0,ver:'',at:0,read_at:0,note:''};
 function slotFor(id){
   if(!Array.isArray(notchSlots)) return null;
   for(const s of notchSlots){ if(s&&s.provider===id) return s; }
@@ -1209,6 +1251,24 @@ function providers(){
     if(picked.length) return picked;
   }
   return list;
+}
+
+// The workbench's three numbers. They are counts, not gauges: nothing publishes a denominator, so
+// each ring frames the number instead of filling an arc, and colour carries the whole message —
+// dim at zero, white for something waiting, red for something already late, amber for something
+// about to be. Zero is never hidden: "0 overdue" is an answer, and often the reason to look.
+function brainCells(){
+  if(!brain||brain.status==='none') return [];
+  const live=brain.status!=='error';
+  return [
+    {id:'due', label:'Todos', n:brain.due, tone:INK},
+    {id:'over', label:'Overdue', n:brain.over, tone:CRIT},
+    {id:'soon', label:'Due soon', n:brain.soon, tone:WATCH},
+  ].map(b=>{
+    const count=(b.n&&typeof b.n.count==='number')?b.n.count:0;
+    const text=live?compactCount(count):'\u2014';
+    return Object.assign(b,{count,text,color:live&&count>0?b.tone:DIM});
+  });
 }
 // Antigravity's "Notch reads" and "Model data", as in the Mac app; chosen in settings
 let agPrefs={limit:'automatic',model:'gemini'};
@@ -1282,13 +1342,20 @@ function svgArc(r,frac,color,width,extra=''){
 const pulseArc=(r,color)=>`<g class="arc-pulse"><circle cx="28" cy="28" r="${r}" fill="none" stroke="${color}" stroke-width="2.5"/></g>`;
 
 function renderRing(){
-  const ps=providers();
-  // Rebuild the DOM only when the structure changes (never swap the element under the cursor)
-  const want=ps.map(p=>p.id+':'+(glyphs[p.base]?glyphs[p.base].kind:'-')).join(',');
+  const ps=providers(), bs=brainCells();
+  // Rebuild the DOM only when the structure changes (never swap the element under the cursor).
+  // The business cells carry `data-p` as well, prefixed `b:`: the hover hit-test and the card's
+  // tail both find their target through that attribute, so neither has to learn about them.
+  const want=ps.map(p=>p.id+':'+(glyphs[p.base]?glyphs[p.base].kind:'-')).join(',')
+    +'|'+bs.map(b=>b.id).join(',');
   if(pill.dataset.cells!==want){
     pill.innerHTML=ps.map((p,i)=>`<div class="cell" data-p="${p.id}" style="--i:${i}">
       <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg><svg class="reading" viewBox="0 0 56 56"></svg><svg class="activity" viewBox="0 0 56 56"></svg><div class="glyph ${(!glyphs[p.base]&&p.glyph.length>1)?'small':''}">${glyphHtml(p)}</div></div>
-      <div class="pct">—</div></div>`).join('');
+      <div class="pct">—</div></div>`).join('')
+      +(bs.length?`<div class="sep"></div>`:'')
+      +bs.map((b,i)=>`<div class="cell" data-p="b:${b.id}" style="--i:${ps.length+i}">
+        <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg><div class="bnum"></div></div>
+        <div class="pct"></div></div>`).join('');
     pill.dataset.cells=want;
   }
   for(const p of ps){
@@ -1331,6 +1398,23 @@ function renderRing(){
     glyph.classList.toggle('dim', !!(h && h.used>=1));
     wrap.classList.toggle('stale', staleOf(p.snap));
   }
+  // The business cells: a frame around a number and the word under it. Drawn after the providers so
+  // the hairline between the two groups is never part of a cell's own box, and so a provider
+  // appearing cannot shift what the business rows are showing.
+  for(const b of bs){
+    const cell=pill.querySelector(`.cell[data-p="b:${b.id}"]`); if(!cell) continue;
+    const svg=cell.querySelector('svg.ring'), num=cell.querySelector('.bnum'), label=cell.querySelector('.pct');
+    // A failed read with nothing kept leaves the frame empty but present: the ring going away would
+    // say the workbench is not configured, which is a different thing from being unreachable.
+    svg.innerHTML=`<circle cx="28" cy="28" r="22" fill="${HOLE}"/>`
+      +`<circle cx="28" cy="28" r="25" fill="none" stroke="${b.count>0?b.color:TRACK}" stroke-width="5" opacity="${brain.status==='error'?.35:1}"/>`;
+    num.textContent=b.text;
+    num.className='bnum'+(b.text.length>3?' w3':b.text.length>2?' w2':'');
+    num.style.color=b.color;
+    label.textContent=textCopy(b.label);
+    label.style.color=b.color;
+    cell.classList.toggle('stale',brain.status==='stale');
+  }
   reportHot(); // a provider appearing or leaving resizes the pill
 }
 
@@ -1365,6 +1449,9 @@ function moreRow(n){ return n>0?`<div class="s-more">${ui().andMore(n)}</div>`:'
 let hoverId='workbuddy';
 function renderCard(){
   const c=document.getElementById('card');
+  // A business cell is not a provider and has no windows: hovering one opens a card about the
+  // workbench itself, decided before any provider is considered.
+  if(hoverId&&hoverId.indexOf('b:')===0){ renderBrainCard(c,hoverId.slice(2)); return; }
   const list=providers();
   // With no provider installed at all there is nothing to say: leave the card closed rather than
   // open it on a blank. (WorkBuddy may be absent like any other provider, so this is reachable.)
@@ -1452,6 +1539,45 @@ function renderCard(){
       html+=`<div class="s-row"><span class="s-dot" style="background:${col}"></span>${esc(a.name)}<span style="color:#808080;margin-left:auto">${esc(textCopy(a.detail))}</span></div>`;
     }
     html+=moreRow(acts.length-SESSION_ROWS)+`</div>`;
+  }
+  c.innerHTML=html;
+  placeCard();
+}
+// The workbench's card. Unlike every provider card, this one can be showing numbers from hours ago:
+// the workbench only rewrites its snapshot while its page is open, so the age of the reading is part
+// of the answer rather than a footnote, and a stale one says so before it says anything else.
+//
+// Details are whatever the workbench published. It trims each list to ten entries, so a list that
+// was trimmed is counted out loud instead of letting ten look like all of them.
+const BRAIN_ROWS=10;
+function renderBrainCard(c,id){
+  const b=brainCells().find(x=>x.id===id);
+  if(!b){ c.classList.remove('show'); return; }
+  const rows=(b.n&&Array.isArray(b.n.items))?b.n.items:[];
+  let html=`<div class="c-head"><span class="c-title">${esc(textCopy(b.label))}</span>`
+    +`<span class="c-count" style="color:${b.color}">${esc(b.text)}</span></div>`;
+  if(brain.status==='stale') html+=`<div class="c-sub">${ui().updated(ago(brain.read_at))} — ${esc(textCopy(brain.note||'showing the last reading'))}</div>`;
+  else if(brain.status==='error') html+=`<div class="c-sub">${esc(textCopy(brain.note||'could not reach the workbench'))}</div>`;
+  else if(brain.at) html+=`<div class="c-sub">${ui().updated(ago(brain.at))}</div>`;
+  if(!rows.length){
+    // Two different nothings, and the card must not confuse them: an empty list on a good reading is
+    // "nothing here", while an empty list on an old snapshot means the page has not published them yet.
+    const why=(brain.status==='ok'&&!b.count)?'Nothing here.'
+      :'No details in this snapshot — open the workbench once so it publishes them.';
+    html+=`<div class="c-note">${esc(textCopy(why))}</div>`;
+  }else{
+    html+=`<div class="c-sessions">`;
+    for(const it of rows.slice(0,BRAIN_ROWS)){
+      const days=(typeof it.days==='number')?it.days:null;
+      const late=days!=null&&days<0;
+      const near=days!=null&&days>=0&&days<=2;
+      const meta=[it.date,it.tag].filter(Boolean).join(' · ');
+      html+=`<div class="s-row"><span class="s-dot" style="background:${late?CRIT:near?WATCH:DIM}"></span>`
+        +`<span class="s-name">${esc(it.title)}</span>`
+        +`<span class="s-meta${late?' late':''}">${esc(meta)}</span></div>`;
+    }
+    if(b.n&&b.n.cut) html+=moreRow(b.count-rows.length); // the workbench trimmed the list, say by how much
+    html+=`</div>`;
   }
   c.innerHTML=html;
   placeCard();
@@ -1806,6 +1932,8 @@ invoke('get_dsh').then(u=>{dshSnap=u||dshSnap;renderRing();}).catch(()=>{});
 
 listen('antigravity',e=>{agSnap=e.payload||agSnap;settle('gemini');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_antigravity').then(u=>{agSnap=u||agSnap;renderRing();}).catch(()=>{});
+listen('cyberbrain',e=>{brain=e.payload||brain;renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
+invoke('get_cyberbrain').then(v=>{brain=v||brain;renderRing();}).catch(()=>{});
 listen('glm',e=>{glmSnap=e.payload||glmSnap;renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_glm').then(u=>{glmSnap=u||glmSnap;renderRing();}).catch(()=>{});
 listen('opencode',e=>{opencodeSnap=e.payload||opencodeSnap;settle('opencode');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});

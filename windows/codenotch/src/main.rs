@@ -22,6 +22,7 @@ mod agy_cli;
 mod glyphs;
 mod trayicon;
 mod activity;
+mod cyberbrain;
 mod diag;
 mod dropzones;
 mod settings_window;
@@ -42,7 +43,15 @@ pub const BUILD: &str = "r31";
 /// 28.5 px past the far one, so 520 cut both fillets and hid the orb. The card wants the same room:
 /// 300 clipped it once it held three window blocks plus the session list, and 460 clipped
 /// Antigravity's two model groups once the reading was stale and an agent was working.
-pub const NOTCH_LONG: f64 = 650.0;
+///
+/// The CyberBrain group is what set the current figure. Three more cells of the same 71 px plus the
+/// hairline between the groups and the gaps around it add 3 × 71 + 4 × 14 + 1 = 270, taking a
+/// five-provider pill from 447 to 717; with both fillets and the orb that is 823, so 900 keeps the
+/// orb its clearance and still fits any screen this app runs on. The window is clamped to the
+/// monitor (`set_size` in `apply_notch_layout`), and the pill is what gets clipped when that
+/// clamp bites — so a machine showing more providers than this needs the number raised again,
+/// by the same arithmetic.
+pub const NOTCH_LONG: f64 = 900.0;
 
 pub struct AppState {
     pub cfg: Mutex<config::Config>,
@@ -65,6 +74,10 @@ pub struct AppState {
     /// `waiting` and `success` are narrowed further than `busy` — a provider is only ever drawn in
     /// those when its own files settle the question, which is why WorkBuddy appears in neither.
     pub activity: Mutex<Vec<activity::Activity>>,
+    /// The CyberBrain workbench's counts, and the rows behind them. This is the one reading that
+    /// does not come off this disk: it is fetched from the snapshot the workbench page publishes,
+    /// so it can be old and it can be missing. See `cyberbrain.rs`.
+    pub brain: Mutex<cyberbrain::Brain>,
 }
 
 fn resolved_lang(raw: &str) -> String {
@@ -732,6 +745,41 @@ fn get_opencode(state: tauri::State<AppState>) -> usage::UsageSnapshot {
 #[tauri::command]
 fn get_activity(state: tauri::State<AppState>) -> Vec<activity::Activity> {
     state.activity.lock().unwrap().clone()
+}
+
+/// The last CyberBrain reading, as stored. Asking never triggers a fetch: the page shows whatever
+/// the poller last found, which is the honest answer to "what do you know right now".
+#[tauri::command]
+fn get_cyberbrain(state: tauri::State<AppState>) -> cyberbrain::Brain {
+    state.brain.lock().unwrap().clone()
+}
+
+/// The workbench account id. Read back so Settings can show whether one is set and how long it is;
+/// the value itself never has to travel to the page.
+#[tauri::command]
+fn get_brain_uid(app: AppHandle) -> String {
+    let st = app.state::<AppState>();
+    let c = st.cfg.lock().unwrap();
+    c.brain_uid.clone()
+}
+
+/// Stored trimmed, and an empty string is a real choice: it turns the three business rings off
+/// without touching anything else.
+#[tauri::command]
+fn set_brain_uid(app: AppHandle, uid: String) -> String {
+    let value = uid.trim().to_string();
+    {
+        let st = app.state::<AppState>();
+        let mut c = st.cfg.lock().unwrap();
+        c.brain_uid = value.clone();
+        config::save(&c);
+    }
+    // The save answers straight away, and the read that makes the rings appear is a network round
+    // trip. It happens on its own thread so a Save button never waits on a timeout; the result
+    // reaches both windows through the usual event.
+    let handle = app.clone();
+    std::thread::spawn(move || cyberbrain::refresh(&handle));
+    value
 }
 
 #[tauri::command]
@@ -1915,6 +1963,9 @@ fn main() {
     }
 
     let cfg = config::load();
+    // Read before `cfg` is moved into the state below: with no uid the business rings are off, and
+    // that has to be true from the first frame rather than from the first poll.
+    let brain0 = cyberbrain::initial(&cfg.brain_uid);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1935,6 +1986,7 @@ fn main() {
             opencode: Mutex::new(opencode::load_persisted()),
             glyphs: Mutex::new(Default::default()),
             activity: Mutex::new(Vec::new()),
+            brain: Mutex::new(brain0),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -1950,6 +2002,9 @@ fn main() {
             get_opencode,
             get_glyphs,
             get_activity,
+            get_cyberbrain,
+            get_brain_uid,
+            set_brain_uid,
             open_data_dir,
             drag_begin,
             refresh_ring,
@@ -2026,6 +2081,7 @@ fn main() {
             glm::start(handle.clone());
             opencode::start(handle.clone());
             activity::start(handle.clone());
+            cyberbrain::start(handle.clone());
             // Collecting glyphs may read icon resources out of a few executables; do it off the main thread and push when done
             let gh = handle.clone();
             std::thread::spawn(move || reload_glyphs(&gh));

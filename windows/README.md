@@ -36,6 +36,7 @@ Providers that are not installed simply do not get a cell. A config saved with t
 | **OpenCode** | OpenCode's own sign-in, read only: the `opencode-go` key in `~/.local/share/opencode/auth.json` → `opencode.ai/zen/go/v1/usage`, or — since OpenCode 1.18 — the OAuth sign-in in `opencode.db` (`credential` table) → `opencode.ai/inference/go/v1/usage` | The Go plan's 5-hour, weekly and monthly windows. A sign-in without a Go plan shows "No OpenCode Go subscription" instead of a ring; Zen pay-as-you-go credit has no balance or usage API, so it is not shown. |
 | **z.ai (GLM)** | The existing Z.AI tool credentials — the GLM Coding Plan key in the environment, in the CLI's config, or in a `~/.claude/settings.json` that points `ANTHROPIC_BASE_URL` at a Z.ai console | The plan's session / weekly windows. |
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
+| **CyberBrain** | One aggregate snapshot that a CyberBrain workbench publishes itself, read over its cloud gateway for the account id set in Settings | Todos, overdue items and delivery warnings, as three rings below a hairline separator. They are business counts, not allowances, so nothing is filled in: the ring frames the number and the colour carries the judgement, and the hover card lists the items behind it. The workbench rewrites the snapshot only while it is open, so a reading can be hours old and the card says when it was pushed. Nothing else about the workbench is readable from here. |
 
 The working-state arc (the thin spinning line inside a ring, the amber pulse when something
 wants your input, and the green pulse when a run has just finished) is drawn for every provider
@@ -45,7 +46,8 @@ whose state can be established from what it leaves on disk. Cursor and the DeepS
 harness is the only one that can say "waiting on your approval" with certainty. Codex, WorkBuddy
 and Antigravity are inferred from their transcripts: the last entry says which part of a turn they
 stopped in, and how long the file has been quiet says whether they are still there. z.ai and
-OpenCode have no state to read and simply show no arc.
+OpenCode have no state to read and simply show no arc, and neither do the CyberBrain rings —
+they are counts published by another machine, with no process here to watch.
 
 Being seen and being fully described are two different questions, and each provider is drawn in
 only the states its own files can settle. The green "just finished" ring lasts ten seconds, which
@@ -330,6 +332,56 @@ Restart Codenotch after installing or removing `agy`: the source is selected at 
 The CLI's text report is parsed defensively; an unsupported format or failed sign-in
 shows an error or the last reading marked stale. Codenotch does not automate sign-in.
 
+### CyberBrain: the workbench's counts
+
+Three counts from a **CyberBrain workbench** — todos, overdue items and delivery warnings — drawn
+as three rings after a hairline separator, in the same pill as the providers. They are counts rather
+than allowances, so no arc is filled in: the ring frames the number, and colour carries the whole
+message — dim at zero, white for something waiting, red for something already late, amber for
+something about to be. Zero is never hidden, because "0 overdue" is an answer and often the reason
+to look. Hovering a ring opens a card listing what is actually behind the number: title, date and a
+short tag, ten rows at most, with *and N more* when the list was longer than that.
+
+Unlike every other cell, this data is not on this machine and cannot be computed from anything that
+is. The workbench is a PWA whose records are end-to-end encrypted, so the only readable thing is the
+small aggregate snapshot it computes and publishes itself, and this is a reader of that one file —
+it cannot decrypt anything and does not try. Three consequences, all deliberate:
+
+- **The workbench decides how fresh a reading is.** The snapshot is only rewritten while the
+  workbench page is open, so a reading can be hours old. The card says when it was pushed rather
+  than implying that it just happened.
+- **It needs the network.** On a failed read the last good reading is kept and marked stale, with
+  the reason and its own age: "no todos" and "could not find out" are different statements, and only
+  one of them would be true. With nothing to fall back on, the rings stay and their numbers become a
+  dash — the frame going away would say the workbench is not configured, which is a different thing
+  from being unreachable.
+- **Details need a workbench that publishes them.** A snapshot pushed by a workbench older than
+  v0.49.104 carries the counts and no details. The rings are still right; the card says to open the
+  workbench once so that it starts publishing them.
+
+**Settings → Accounts → CyberBrain** is where the account id goes. There is nothing to detect — no
+file to find and no process to look for — so with no id the three rings are simply not drawn. The id
+is kept in `%APPDATA%\codenotch\config.json` and never in this repository, on purpose: the
+workbench's `getStats` op does not authenticate the caller, so knowing the id is enough to read that
+snapshot, details included. Treat it as the password to those numbers. It is stored in the clear —
+the workbench's design, not this reader's — but a build that compiled it in would hand every count
+and every customer name to anyone who read the source.
+
+The snapshot's shape, for anyone extending this:
+
+```json
+{"ok":true,"todos":12,"overdue":3,"dueSoon":1,"progress":8,"ver":"0.49.104",
+ "detail":{"due":[{"title":"…","date":"2026-09-21","kind":"todo","tag":"工作","days":-8}],
+           "over":[…],"soon":[…],"cut":{"due":true,"over":false,"soon":false}}}
+```
+
+The counts are read from the top level rather than from the lengths of those lists, so a list the
+workbench trimmed to ten still reports the real number, and `cut` says which lists were trimmed. The
+workbench computes `days` — signed calendar days for todos and follow-ups, working days for delivery
+warnings — and this build passes it through instead of recomputing a second opinion that could
+disagree with the number printed beside it. An entry dated before this feature simply has no
+`detail`, and the reading survives that: counts kept, lists empty.
+
 ## Install / build
 
 Download [`Codenotch-Setup.exe`](https://github.com/vinzdg/codenotch/releases/latest/download/Codenotch-Setup.exe)
@@ -445,11 +497,11 @@ Three surfaces draw their own text, so each keeps its own table:
 |---|---|---|
 | Tray menu | `codenotch/src/i18n.rs` (`tr`), `codenotch/src/traymenu.rs` (`label`) | en · ru · zh · ja · ko · uk · pt-BR |
 | Hover card | `codenotch/ui/notch.html` (`TEXT`, `PATTERNS`, `UI`) | en · ru · zh · zh-Hant · ko · uk · pt-BR |
-| Settings window | `codenotch/ui/settings.html` (`STATIC_TEXT`, `STATUS_TEXT`) | en · ru · zh · ja · ko · uk · pt-BR |
+| Settings window | `codenotch/ui/settings.html` (`STATIC_TEXT`, `STATUS_TEXT`) | en · ru · zh · zh-Hant · ja · ko · uk · pt-BR |
 
 Help is welcome on the gaps, which fall back to English rather than breaking anything:
 
-- the hover card has no Japanese;
+- the hover card has no Japanese, and its `zh-Hant` table is thinner than the settings window's;
 - the provider notes — the sentences `workbuddy.rs` and `dsh.rs` put on the card — are translated
   into the two Chinese variants only, so another language shows them in English. Each one is a whole
   sentence, so it arrives through `PATTERNS` rather than `TEXT`.

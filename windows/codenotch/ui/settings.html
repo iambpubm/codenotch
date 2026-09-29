@@ -158,6 +158,8 @@
           <div class="sec">Not connected</div>
           <div class="group" id="acc-off" data-dynamic></div>
         </div>
+        <div class="sec">CyberBrain</div>
+        <div class="group" id="cb-group" data-dynamic></div>
       </section>
 
       <section class="pane" id="pane-appearance" role="tabpanel" aria-labelledby="tab-appearance" hidden>
@@ -275,6 +277,15 @@ const PT_BR_STATIC = {
   'Remove':'Remover',
   'Credential saved — the balance is read with it':'Credencial guardada — o saldo é lido com ela',
   'Paste a credential to read the Credits balance':'Cole uma credencial para ler o saldo de créditos',
+  'CyberBrain':'CyberBrain',
+  'Workbench id':'Id do workbench',
+  'Paste the workbench id':'Cole o id do workbench',
+  'No workbench id yet — the three rings stay hidden':'Ainda sem id do workbench — os três anéis ficam ocultos',
+  'Reading now…':'Lendo agora…',
+  'Snapshot read':'Instantâneo lido',
+  'Could not read the snapshot':'Não foi possível ler o instantâneo',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'Estes três anéis leem um pequeno instantâneo de contagens que o próprio workbench publica. Conhecer este id basta para ler esse instantâneo, detalhes incluídos, por isso ele fica neste arquivo e não dentro do Codenotch.',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'O workbench só reescreve o instantâneo enquanto está aberto, então uma leitura pode ter horas. O cartão diz quando ele foi publicado.',
   'Colour transition':'Transição de cor',
   'Hard step':'Degrau seco',
   'Colour ramp':'Rampa de cor',
@@ -394,6 +405,15 @@ const RU_STATIC = {
   'Remove':'Удалить',
   'Credential saved — the balance is read with it':'Учётные данные сохранены — баланс читается с их помощью',
   'Paste a credential to read the Credits balance':'Вставьте учётные данные, чтобы видеть баланс кредитов',
+  'CyberBrain':'CyberBrain',
+  'Workbench id':'Идентификатор воркбенча',
+  'Paste the workbench id':'Вставьте идентификатор воркбенча',
+  'No workbench id yet — the three rings stay hidden':'Идентификатор воркбенча ещё не указан — три кольца останутся скрытыми',
+  'Reading now…':'Читаю…',
+  'Snapshot read':'Снимок прочитан',
+  'Could not read the snapshot':'Не удалось прочитать снимок',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'Эти три кольца читают небольшой снимок счётчиков, который воркбенч публикует сам. Знать этот идентификатор достаточно, чтобы прочитать такой снимок вместе с подробностями, поэтому он хранится в этом файле, а не внутри Codenotch.',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'Воркбенч перезаписывает снимок только пока открыт, поэтому показание может быть многочасовой давности. На карточке указано, когда он был опубликован.',
   'Colour transition':'Переход цвета',
   'Hard step':'Резкая смена',
   'Colour ramp':'Плавный переход',
@@ -480,6 +500,15 @@ const ZH_STATIC = {
   'Remove':'移除',
   'Credential saved — the balance is read with it':'凭据已保存——余额将用它读取',
   'Paste a credential to read the Credits balance':'粘贴凭据后即可读取额度余额',
+  'CyberBrain':'赛博大脑',
+  'Workbench id':'工作台 ID',
+  'Paste the workbench id':'粘贴工作台 ID',
+  'No workbench id yet — the three rings stay hidden':'还没填工作台 ID —— 三个业务环不会显示',
+  'Reading now…':'正在读取…',
+  'Snapshot read':'已读到快照',
+  'Could not read the snapshot':'读不到快照',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'这三个环读的是工作台自己推送的一小份计数快照。知道这个 ID 就足以读到那份快照，连明细一起，所以它只存在本文件里，不写进 Codenotch 本身。',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'工作台只在打开的时候才会改写这份快照，所以读数可能是几小时前的。卡片上会写明它是什么时候推上来的。',
   'Colour transition':'颜色过渡',
   'Hard step':'阶梯式',
   'Colour ramp':'颜色渐变',
@@ -597,6 +626,15 @@ const ZH_HANT_STATIC = {
   'Remove':'移除',
   'Credential saved — the balance is read with it':'憑證已儲存——餘額將用它讀取',
   'Paste a credential to read the Credits balance':'貼上憑證後即可讀取額度餘額',
+  'CyberBrain':'賽博大腦',
+  'Workbench id':'工作台 ID',
+  'Paste the workbench id':'貼上工作台 ID',
+  'No workbench id yet — the three rings stay hidden':'還沒填工作台 ID —— 三個業務環不會顯示',
+  'Reading now…':'正在讀取…',
+  'Snapshot read':'已讀到快照',
+  'Could not read the snapshot':'讀不到快照',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'這三個環讀的是工作台自己推送的一小份計數快照。知道這個 ID 就足以讀到那份快照，連明細一起，所以它只存在本檔案裡，不寫進 Codenotch 本身。',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'工作台只在打開的時候才會改寫這份快照，所以讀數可能是幾小時前的。卡片上會寫明它是什麼時候推上來的。',
   'Colour transition':'顏色過渡',
   'Hard step':'階梯式',
   'Colour ramp':'顏色漸變',
@@ -714,6 +752,15 @@ const JA_STATIC = {
   'Remove':'削除',
   'Credential saved — the balance is read with it':'認証情報を保存しました — 残高はこれで読み取ります',
   'Paste a credential to read the Credits balance':'認証情報を貼り付けるとクレジット残高を読み取れます',
+  'CyberBrain':'CyberBrain',
+  'Workbench id':'ワークベンチ ID',
+  'Paste the workbench id':'ワークベンチ ID を貼り付け',
+  'No workbench id yet — the three rings stay hidden':'ワークベンチ ID が未設定です — 3 つのリングは表示されません',
+  'Reading now…':'読み取り中…',
+  'Snapshot read':'スナップショットを読み取りました',
+  'Could not read the snapshot':'スナップショットを読み取れませんでした',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'この 3 つのリングは、ワークベンチ自身が公開する集計スナップショットを読んでいます。この ID を知っていれば明細も含めてそのスナップショットを読めるため、Codenotch 本体ではなくこのファイルに保存しています。',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'ワークベンチがスナップショットを書き換えるのは開いている間だけなので、数時間前の値になり得ます。いつ公開されたかはカードに表示されます。',
   'Colour transition':'色の遷移',
   'Hard step':'段階的',
   'Colour ramp':'カラーグラデーション',
@@ -818,6 +865,15 @@ const KO_STATIC = {
   'Remove':'제거',
   'Credential saved — the balance is read with it':'자격 증명이 저장되었습니다 — 이 값으로 잔액을 읽습니다',
   'Paste a credential to read the Credits balance':'자격 증명을 붙여넣으면 크레딧 잔액을 읽을 수 있습니다',
+  'CyberBrain':'CyberBrain',
+  'Workbench id':'워크벤치 ID',
+  'Paste the workbench id':'워크벤치 ID 붙여넣기',
+  'No workbench id yet — the three rings stay hidden':'워크벤치 ID가 없습니다 — 세 개의 링은 표시되지 않습니다',
+  'Reading now…':'읽는 중…',
+  'Snapshot read':'스냅샷을 읽었습니다',
+  'Could not read the snapshot':'스냅샷을 읽지 못했습니다',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'이 세 링은 워크벤치가 스스로 공개하는 집계 스냅샷을 읽습니다. 이 ID만 알면 세부 내역까지 그 스냅샷을 읽을 수 있으므로, Codenotch 본체가 아니라 이 파일에 보관합니다.',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'워크벤치는 열려 있는 동안에만 스냅샷을 다시 쓰므로 몇 시간 전 값일 수 있습니다. 언제 올라왔는지는 카드에 표시됩니다.',
   'Colour transition':'색상 전환',
   'Hard step':'단계식',
   'Colour ramp':'색상 그라데이션',
@@ -937,6 +993,15 @@ const UK_STATIC = {
   'Remove':'Видалити',
   'Credential saved — the balance is read with it':'Облікові дані збережено — баланс читається з них',
   'Paste a credential to read the Credits balance':'Вставте облікові дані, щоб бачити баланс кредитів',
+  'CyberBrain':'CyberBrain',
+  'Workbench id':'Ідентифікатор воркбенча',
+  'Paste the workbench id':'Вставте ідентифікатор воркбенча',
+  'No workbench id yet — the three rings stay hidden':'Ідентифікатор воркбенча ще не вказано — три кільця залишаться прихованими',
+  'Reading now…':'Читаю…',
+  'Snapshot read':'Знімок прочитано',
+  'Could not read the snapshot':'Не вдалося прочитати знімок',
+  'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.':'Ці три кільця читають невеликий знімок лічильників, який воркбенч публікує сам. Знати цей ідентифікатор достатньо, щоб прочитати такий знімок разом із подробицями, тому він зберігається в цьому файлі, а не всередині Codenotch.',
+  'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.':'Воркбенч перезаписує знімок лише поки відкритий, тому показання може бути багатогодинної давності. На картці зазначено, коли його опубліковано.',
   'Colour transition':'Перехід кольору',
   'Hard step':'Різкий крок',
   'Colour ramp':'Кольоровий градієнт',
@@ -1201,6 +1266,17 @@ let options = [];      // [{id,label,status,used}] from get_tray_options
    Read separately from the option list because the row says more than "stored / not stored", and it
    is re-read after every save or clear so the note under it is never a step behind the file. */
 let dsCred = { saved:false, source:'', available:false, topup_total:null };
+/* CyberBrain 的三个业务环不是 provider：没有进程可找、没有窗口可读。计数是工作台自己算好、
+   推到它自己云上的那一小份快照，这里只负责去读。下面的 id 就是那份快照的名字，也是这套东西
+   唯一需要用户提供的东西 —— 没有任何可探测的痕迹。
+
+   它不是一个令牌，这个页面也从不把它发出去：存储与请求都在 Rust 里。但工作台的 `getStats`
+   不验证调用者身份，光知道 id 就足以读到那份快照，明细也一并读到。所以它不进 Codenotch 的
+   源码，而是放在这里问用户要，下面的说明也把这件事讲明白。 */
+let brainUid = '';
+let brainState = null;   // 最近一次读数；Rust 还没答复过时为 null
+let brainBusy = false;   // 刚按下保存，正在等这一次网络回读
+let brainBusyTimer = 0;
 let glyphs = {};       // id -> {kind:'svg'|'png'|'appicon', svg, url}
 function providerList(){
   return options.length ? options : ORDER.map(id => ({ id, label:FALLBACK_LABEL[id], status:'' }));
@@ -1221,6 +1297,13 @@ function refreshOptions(){
   });
   call('get_deepseek_credential', undefined, null).then(v => {
     if(v && typeof v === 'object'){ dsCred = v; renderAccounts(); }
+  });
+  // 网页里那个 uid 是只读回显、不是密文：19 位数字，抄错了是唯一的坏情况，所以必须能看回去。
+  call('get_brain_uid', undefined, null).then(v => {
+    if(typeof v === 'string'){ brainUid = v; renderCyberbrain(); }
+  });
+  call('get_cyberbrain', undefined, null).then(v => {
+    if(v && typeof v === 'object'){ brainState = v; renderCyberbrain(); }
   });
 }
 
@@ -1302,6 +1385,83 @@ function workbuddyCredentialRow(p){
     + '<div class="acct-note">' + esc(ui(saved ? savedNote : emptyNote, saved ? savedNote : emptyNote)) + '</div>'
     + '</div>';
 }
+/* 三句话，各自都要说实话：
+   ① 数据从哪来、以及这个 id 为什么算凭据；
+   ② 读数可能很旧 —— 快照只在工作台开着的时候才会被改写；
+   ③ 没填 id 时不是出错，是这三个环被关掉了。 */
+const CB_WHAT = 'These three rings read a small snapshot of counts the workbench publishes itself. Knowing this id is enough to read that snapshot, its details included, so it is kept in this file rather than inside Codenotch.';
+const CB_FRESH = 'The workbench only rewrites the snapshot while it is open, so a reading can be hours old. The card says when it was pushed.';
+const CB_NO_UID = 'No workbench id yet — the three rings stay hidden';
+const CB_READING = 'Reading now…';
+const CB_READ = 'Snapshot read';
+const CB_FAILED = 'Could not read the snapshot';
+/* 工作台推快照的时刻，用本地格式印出来：一眼能看出这份读数有多旧，而且不需要多一条译文。 */
+function brainWhen(ms){
+  if(!ms) return '';
+  try {
+    return ' · ' + new Date(ms).toLocaleString(uiLang, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+  } catch(e){ return ''; }
+}
+function cyberbrainRow(){
+  const b = brainState || {};
+  const st = typeof b.status === 'string' ? b.status : 'none';
+  let line;
+  if(!brainUid) line = ui(CB_NO_UID, CB_NO_UID);
+  else if(brainBusy) line = ui(CB_READING, CB_READING);
+  else if(st === 'ok') line = ui(CB_READ, CB_READ) + brainWhen(b.at);
+  // 陈旧与失败都不许显示成零：保留的旧读数连同它自己的时刻一起印出来，理由跟在后面。
+  else if(st === 'stale') line = [ui(CB_READ, CB_READ) + brainWhen(b.at), b.note].filter(Boolean).join(' — ');
+  else line = b.note || ui(CB_FAILED, CB_FAILED);
+  return '<div class="acct">'
+    + '<div class="acct-line"><span class="acct-name"><span>' + esc(ui('CyberBrain', 'CyberBrain')) + '</span></span>'
+    + '<span class="value">' + esc(line) + '</span></div>'
+    + '<div class="acct-col"><span>' + esc(ui('Workbench id', 'Workbench id')) + '</span>'
+    + '<input class="cred" data-cb="uid" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="'
+    + esc(brainUid) + '" placeholder="' + esc(ui('Paste the workbench id', 'Paste the workbench id')) + '">'
+    + '<div class="acct-actions">'
+    + '<button class="mini" data-cb-save>' + esc(ui('Save', 'Save')) + '</button>'
+    + (brainUid ? '<button class="mini ghost" data-cb-clear>' + esc(ui('Remove', 'Remove')) + '</button>' : '')
+    + '</div>'
+    + '<div class="acct-note">' + esc(ui(CB_WHAT, CB_WHAT)) + '</div>'
+    + '<div class="acct-note">' + esc(ui(CB_FRESH, CB_FRESH)) + '</div>'
+    + '</div></div>';
+}
+/* 一次读数可能落在任意一分钟，而重建这一行会把输入框里没保存的内容一起丢掉 —— 所以只要光标
+   还在框里就不动它。按保存时焦点已经移到按钮上，回读状态照常显示。 */
+function renderCyberbrain(){
+  const host = document.getElementById('cb-group');
+  if(!host) return;
+  const box = host.querySelector('[data-cb="uid"]');
+  if(box && document.activeElement === box) return;
+  host.innerHTML = cyberbrainRow();
+}
+/* 等待回读的这盏灯不能永远亮着：Rust 那边 20 秒就放弃，所以 25 秒后无论有没有事件都收灯，
+   并主动再问一次现状。事件丢了也不该让这一行停在「正在读取」。 */
+function brainWait(on){
+  brainBusy = on;
+  if(brainBusyTimer){ clearTimeout(brainBusyTimer); brainBusyTimer = 0; }
+  if(on) brainBusyTimer = setTimeout(() => { brainBusy = false; refreshOptions(); }, 25000);
+  renderCyberbrain();
+}
+/* 保存回读的是「这个号码到底能不能用」，而那是 Rust 必须上网才知道的事，所以命令立刻返回、
+   答案随后经事件送到；这一行先显示正在读。字段本身先认用户刚打的字，免得下面的重建把它改回去。 */
+function saveBrainUid(){
+  const box = accountsPane.querySelector('[data-cb="uid"]');
+  const uid = box ? box.value.trim() : '';
+  brainUid = uid;
+  brainWait(true);
+  invoke('set_brain_uid', { uid: uid })
+    .then(v => { if(typeof v === 'string') brainUid = v; toast(); })
+    .catch(e => { brainWait(false); refreshOptions(); strip('set_brain_uid failed: ' + errText(e)); });
+}
+function clearBrainUid(){
+  brainUid = '';
+  brainState = null;
+  brainWait(false);
+  invoke('set_brain_uid', { uid: '' })
+    .then(() => { refreshOptions(); toast(); })
+    .catch(e => { refreshOptions(); strip('set_brain_uid failed: ' + errText(e)); });
+}
 function accountBlock(p, isOn, locked){
   const st = statusText(p);
   let h = '<div class="acct' + (isOn ? '' : ' off') + '">'
@@ -1329,6 +1489,7 @@ function renderAccounts(){
   document.getElementById('acc-off-wrap').hidden = !off.length;
   document.getElementById('acc-off').innerHTML = off.map(p => accountBlock(p, false, false)).join('')
     + '<div class="item cap">' + esc(ui(NO_RING, NO_RING)) + '</div>';
+  renderCyberbrain();
 }
 function saveNotch(next){
   const ids = providerList().map(p => p.id);
@@ -1435,6 +1596,8 @@ accountsPane.addEventListener('click', e => {
   if(e.target.closest('[data-wb-clear]')){ clearWorkbuddyCredential(); return; }
   if(e.target.closest('[data-ds-save]')){ saveDeepseekCredential(); return; }
   if(e.target.closest('[data-ds-clear]')){ clearDeepseekCredential(); return; }
+  if(e.target.closest('[data-cb-save]')){ saveBrainUid(); return; }
+  if(e.target.closest('[data-cb-clear]')){ clearBrainUid(); return; }
 });
 accountsPane.addEventListener('change', e => {
   const box = e.target.closest('[data-ag]');
@@ -1823,6 +1986,8 @@ function boot(){
   call('get_antigravity_prefs', undefined, null).then(v => { if(v && typeof v === 'object'){ agPrefs = v; renderAccounts(); } });
   call('get_glyphs', undefined, null).then(g => { if(g && typeof g === 'object'){ glyphs = g; renderAccounts(); } });
   try { window.__TAURI__.event.listen('glyphs', e => { if(e.payload){ glyphs = e.payload; renderAccounts(); } }); } catch(e) { /* the letters stay */ }
+  // 保存后那一次回读是异步的，答案走这个事件：窗口开着的时候就能看到结果，而不是等下次获得焦点。
+  try { window.__TAURI__.event.listen('cyberbrain', e => { if(e.payload){ brainState = e.payload; brainWait(false); } }); } catch(e) { /* 下次获得焦点时再读一次 */ }
   call('get_scale', undefined, null).then(v => { if(typeof v === 'number') notchSize = v; renderSize(); });
   call('get_notch_edge', undefined, null).then(v => { if(typeof v === 'string') notchEdge = v; renderEdge(); });
   refreshScreens();
