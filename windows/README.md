@@ -483,9 +483,9 @@ and keeps only its average brightness, which is never stored or sent. With the s
 open, or Show set to Always show, nothing is read.
 
 Folded, the bar also answers "is anything running?" by itself, so finding out does not mean opening
-the notch. A 3 px rail runs along the bar's inner edge — a short segment sliding up and down it while
-an agent works, the whole rail filled and pulsing while one is waiting on your approval, and solid
-green for a run that has just finished, which fades on its own. The three differ in shape as well as
+the notch. A 3 px rail runs along the bar's inner edge — three short segments lighting in turn along
+it while an agent works, the whole rail filled and pulsing while one is waiting on your approval, and
+solid green for a run that has just finished, which fades on its own. The three differ in shape as well as
 in colour, because the rail is far too small for colour alone to be trusted, and the difference worth
 the most is waiting-versus-busy: those are exactly the two states you folded the notch to stop looking
 at. It reads only the providers actually shown in the pill, so the bar cannot light up for a cell that
@@ -495,6 +495,16 @@ strip is where the backdrop is read from, and the read is a real screen capture:
 comes back as though it were the wallpaper. No single colour could have served both bars in any case —
 4.4:1 against both black and white is the best any sRGB colour manages — so the rail reuses the
 activity arcs' own three, and the bar's flip carries them.
+
+The segments light in the order 1, 2, 3, 2, and each takes 1.4 of the cycle's four steps to rise and
+fall — so neighbours overlap by 0.4 of a step and the bar's total brightness never changes. It breathes
+rather than blinks. Two earlier readings were tried and dropped. A single segment sliding the length of
+the rail is continuous motion, and peripheral vision reports motion on its own: it is the one thing
+here that competes for attention, which is the opposite of what a folded notch is for. Lighting one
+segment per step is worse — every handover is an abrupt appearance, and an abrupt appearance is caught
+more strongly than smooth motion is. Holding the total steady is what removes both, and it is worth
+re-checking by sampling the keyframes whenever they are touched, because a sum that drifts by a little
+looks exactly like a sum that holds.
 
 ### Icons
 

@@ -267,38 +267,58 @@
      is where Rust reads the backdrop from (backdrop.rs) and that read is a real screen capture, so
      anything drawn there would come back as though it were the wallpaper and the bar would spend its
      time chasing its own colour. At opacity 0 while nothing is running, which leaves an idle notch
-     exactly what it has always been. */
-  #rail{position:absolute;background:var(--rail-c,transparent);pointer-events:none;opacity:0;
-    /* The colour has to be in here as well as the opacity: leaving a state unsets `--rail-c`, so a
-       transition on opacity alone would have nothing left to fade and the rail would blink out. */
-    transition:opacity .18s ease,background-color .18s ease;--rail-len:22px;
-    /* 1.5 on a 3 px rail is a clean semicircle at each end and needs no clamping, which anything
-       larger would: these are the only two corners that face open screen. */
-    left:0;top:0;width:3px;height:var(--rail-len);border-radius:1.5px 0 0 1.5px}
+     exactly what it has always been.
+
+     The rail is the container; the three <i> inside it are the segments. Only `run` uses them, because
+     only `run` is a thing that persists — waiting and a fresh success are the full length of the bar
+     and paint the container itself. The colour has to be in the transition as well as the opacity:
+     leaving a state unsets `--rail-c`, so a transition on opacity alone would have nothing left to
+     fade and the rail would blink out. */
+  #rail{position:absolute;pointer-events:none;opacity:0;
+    transition:opacity .18s ease,background-color .18s ease;
+    left:0;top:0;width:3px;height:77px;border-radius:1.5px 0 0 1.5px;
+    display:flex;flex-direction:column;gap:8.5px}
+  /* 1.5 on a 3 px rail is a clean semicircle at each end and needs no clamping, which anything larger
+     would: these are the only two corners that face open screen. */
+  #rail>i{flex:1;background:var(--rail-c,transparent);border-radius:1.5px;opacity:0}
   body[data-edge="left"] #rail{left:auto;right:0;border-radius:0 1.5px 1.5px 0}
-  body[data-edge="top"] #rail{left:0;top:auto;bottom:0;width:var(--rail-len);height:3px;border-radius:0 0 1.5px 1.5px}
-  body[data-edge="bottom"] #rail{left:0;top:0;width:var(--rail-len);height:3px;border-radius:1.5px 1.5px 0 0}
-  /* Three states past idle, told apart by shape as well as by colour so the reading survives a bar
-     this small and a colour-blind eye: waiting fills the whole rail and pulses — it is the one that
-     wants you; running is a short segment sliding along it — it is the one that does not; a run that
-     has just finished goes solid green, and that one needs no timer here because the probe stops
+  body[data-edge="top"] #rail{left:0;top:auto;bottom:0;width:77px;height:3px;border-radius:0 0 1.5px 1.5px;flex-direction:row}
+  body[data-edge="bottom"] #rail{left:0;top:0;width:77px;height:3px;border-radius:1.5px 1.5px 0 0;flex-direction:row}
+  /* Four states past idle, told apart by shape as well as by colour so the reading survives a bar
+     this small and a colour-blind eye: waiting fills the whole bar and pulses — it is the one that
+     wants you; running lights three segments in turn along it — it is the one that does not; a run
+     that has just finished goes solid green, and that one needs no timer here because the probe stops
      reporting success on its own. All four values `railState` can return are spelled out, idle
      included even though the rule above already says it, so the state space is one closed set here
-     and a later change to `#rail` cannot quietly take the idle case with it. steps() on both
-     animations for the reason the arcs carry it: a smooth 60 fps animation in a transparent
+     and a later change to `#rail` cannot quietly take the idle case with it. steps() on every
+     animation for the reason the arcs carry it: a smooth 60 fps animation in a transparent
      always-on-top window drags the desktop compositor down with it. */
   body[data-rail="idle"] #rail{opacity:0}
-  body[data-rail="wait"] #rail{--rail-c:var(--rail-wait);--rail-len:77px;opacity:1;animation:pulse 1.1s steps(6) infinite}
-  body[data-rail="done"] #rail{--rail-c:var(--rail-done);--rail-len:77px;opacity:1}
-  body[data-rail="run"] #rail{--rail-c:var(--rail-run);opacity:1;animation:rail-glide 2.4s steps(20) infinite alternate}
-  body[data-edge="top"][data-rail="run"] #rail,
-  body[data-edge="bottom"][data-rail="run"] #rail{animation-name:rail-glide-across}
-  /* 55 either way: the bar is 79 long on every edge, less its two 1 px borders and the segment's 22 */
-  @keyframes rail-glide{from{transform:translateY(0)}to{transform:translateY(55px)}}
-  @keyframes rail-glide-across{from{transform:translateX(0)}to{transform:translateX(55px)}}
+  body[data-rail="wait"] #rail{--rail-c:var(--rail-wait);background:var(--rail-c);opacity:1;animation:pulse 1.1s steps(6) infinite}
+  body[data-rail="done"] #rail{--rail-c:var(--rail-done);background:var(--rail-c);opacity:1}
+  body[data-rail="run"] #rail{--rail-c:var(--rail-run);opacity:1}
+  body[data-rail="run"] #rail>i{animation:rail-tick-a 4s steps(40) infinite}
+  body[data-rail="run"] #rail>i:nth-child(2){animation-name:rail-tick-b}
+  body[data-rail="run"] #rail>i:nth-child(3){animation-name:rail-tick-c}
+  /* 1 2 3 2 — the middle segment lights twice per turn and the two ends once each, so the reading is a
+     pulse that turns around instead of one that resets: 1,2,3,2 then 1,2,3,2 again. A step is 25% and
+     each segment rises and falls across 1.4 steps, which is exactly what makes neighbours overlap by
+     0.4 of a step and holds the bar's total brightness steady — there is no frame where the whole rail
+     is dark and no frame where anything jumps, and that is the whole difference from lighting one
+     segment per step, which blinked at every handover. */
+  @keyframes rail-tick-a{
+    0%{opacity:.5}5%{opacity:1}20%{opacity:1}30%{opacity:0}95%{opacity:0}100%{opacity:.5}}
+  @keyframes rail-tick-b{
+    0%{opacity:.5}5%{opacity:0}20%{opacity:0}30%{opacity:1}45%{opacity:1}55%{opacity:0}70%{opacity:0}80%{opacity:1}95%{opacity:1}100%{opacity:.5}}
+  @keyframes rail-tick-c{
+    0%{opacity:0}45%{opacity:0}55%{opacity:1}70%{opacity:1}80%{opacity:0}100%{opacity:0}}
   @media (prefers-reduced-motion: reduce){
     #rail{transition:none}
-    body[data-rail="run"] #rail,body[data-rail="wait"] #rail{animation:none}
+    body[data-rail="wait"] #rail{animation:none}
+    /* Without its animation a segment sits at its base opacity of 0, so a running rail would vanish
+       altogether; hold the three lit instead, which still reads as "running" against the solid bar
+       that waiting and done draw. */
+    body[data-rail="run"] #rail>i{animation:none;opacity:1}
   }
   /* The rings leave by fading and sliding a little toward the edge, one after another — the Mac's
      NotchMotion.stagger, 28 of its design px (10 here), and no scaling: the clip does the concealing */
@@ -365,7 +385,7 @@
     <svg class="h-glyph" viewBox="0 0 12 12" aria-hidden="true"><path fill-rule="evenodd" d="M5.1.6h1.8l.3 1.5 1.1.5 1.3-.8 1.3 1.3-.8 1.3.5 1.1 1.5.3v1.8l-1.5.3-.5 1.1.8 1.3-1.3 1.3-1.3-.8-1.1.5-.3 1.5H5.1l-.3-1.5-1.1-.5-1.3.8-1.3-1.3.8-1.3-.5-1.1L.6 6.9V5.1l1.5-.3.5-1.1-.8-1.3 1.3-1.3 1.3.8 1.1-.5zM6 4.1a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8z"/></svg>
   </div>
   <div id="pill"></div><!-- one .cell per provider, stacked vertically (upstream: data-driven, the same layout for 1–5 cells) -->
-  <div id="rest"><div id="rail"></div></div><!-- after the pill, so its outline is drawn over the clipped pill -->
+  <div id="rest"><div id="rail"><i></i><i></i><i></i></div></div><!-- after the pill, so its outline is drawn over the clipped pill -->
   <div id="notice"></div>
 </div>
 <script>
