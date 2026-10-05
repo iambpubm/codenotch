@@ -243,6 +243,9 @@
      pill's fill in either palette, where --edge is 1.5:1. */
   #rest{position:absolute;box-sizing:border-box;background:var(--pill);border:1px solid var(--rest-edge);pointer-events:none;
     right:0;top:50%;translate:0 -50%;width:10px;height:79px;border-right:none;border-radius:6px 0 0 6px;
+    /* A parent's border-radius does not clip its own children, so the rail below would stand proud of
+       the bar's rounded ends by a pixel or two at each corner without this. */
+    overflow:hidden;
     opacity:0;transition:opacity .16s ease,background-color .3s ease,border-color .3s ease}
   body.folded #rest{opacity:1;transition:opacity .2s ease .18s,background-color .3s ease,border-color .3s ease} /* arrives as the clip does */
   /* With Adaptive pill on, it follows what is behind it instead, as the iPhone's home indicator does:
@@ -269,10 +272,12 @@
     /* The colour has to be in here as well as the opacity: leaving a state unsets `--rail-c`, so a
        transition on opacity alone would have nothing left to fade and the rail would blink out. */
     transition:opacity .18s ease,background-color .18s ease;--rail-len:22px;
-    left:0;top:0;width:3px;height:var(--rail-len);border-radius:5px 0 0 5px}
-  body[data-edge="left"] #rail{left:auto;right:0;border-radius:0 5px 5px 0}
-  body[data-edge="top"] #rail{left:0;top:auto;bottom:0;width:var(--rail-len);height:3px;border-radius:0 0 5px 5px}
-  body[data-edge="bottom"] #rail{left:0;top:0;width:var(--rail-len);height:3px;border-radius:5px 5px 0 0}
+    /* 1.5 on a 3 px rail is a clean semicircle at each end and needs no clamping, which anything
+       larger would: these are the only two corners that face open screen. */
+    left:0;top:0;width:3px;height:var(--rail-len);border-radius:1.5px 0 0 1.5px}
+  body[data-edge="left"] #rail{left:auto;right:0;border-radius:0 1.5px 1.5px 0}
+  body[data-edge="top"] #rail{left:0;top:auto;bottom:0;width:var(--rail-len);height:3px;border-radius:0 0 1.5px 1.5px}
+  body[data-edge="bottom"] #rail{left:0;top:0;width:var(--rail-len);height:3px;border-radius:1.5px 1.5px 0 0}
   /* Three states past idle, told apart by shape as well as by colour so the reading survives a bar
      this small and a colour-blind eye: waiting fills the whole rail and pulses — it is the one that
      wants you; running is a short segment sliding along it — it is the one that does not; a run that
