@@ -104,6 +104,9 @@
   .mini.ghost{background:transparent}
   /* Not .acct-detail: that one carries its own 26 px indent, which would stack on top of the block's. */
   .acct-note{font-size:12px;color:var(--text2)}
+  /* The verdict a credential check came back with. Red only when the server refused it, so a pass
+     does not shout and a failure is not something to go looking for. */
+  .acct-note.bad{color:var(--danger)}
   .glyph{width:16px;height:16px;display:inline-grid;place-items:center;flex:none;color:var(--text)}
   .glyph svg{width:16px;height:16px;fill:currentColor}
   .glyph img{width:16px;height:16px;border-radius:4px;display:block}
@@ -272,6 +275,14 @@ const PT_BR_STATIC = {
   'Paid in so far has to be a number':'O total pago até agora precisa ser um número',
   'WorkBuddy credential':'Credencial do WorkBuddy',
   'Paste the accessToken value':'Cole o valor do accessToken',
+  'Paste the accessToken value, or a refresh token':'Cole o valor do accessToken ou um refresh token',
+  'Check':'Verificar',
+  'Checking…':'Verificando…',
+  'Access and refresh token saved':'access token e refresh token guardados',
+  'Refresh token saved — a fresh access token is fetched with it':'refresh token guardado — um novo access token é obtido automaticamente',
+  'Token expiry':'Validade da credencial',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'Esta credencial pertence a uma sessão de início de sessão que o WorkBuddy já substituiu, por isso já não funciona — cole uma nova',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'Verificar envia a credencial ao WorkBuddy e mostra a resposta, sem guardar nada',
   'Enterprise id (optional)':'ID da empresa (opcional)',
   'Save':'Guardar',
   'Remove':'Remover',
@@ -400,6 +411,14 @@ const RU_STATIC = {
   'Paid in so far has to be a number':'Сумма пополнений должна быть числом',
   'WorkBuddy credential':'Учётные данные WorkBuddy',
   'Paste the accessToken value':'Вставьте значение accessToken',
+  'Paste the accessToken value, or a refresh token':'Вставьте значение accessToken или refresh token',
+  'Check':'Проверить',
+  'Checking…':'Проверка…',
+  'Access and refresh token saved':'access token и refresh token сохранены',
+  'Refresh token saved — a fresh access token is fetched with it':'refresh token сохранён — новый access token запрашивается автоматически',
+  'Token expiry':'Срок действия учётных данных',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'Эта учётная запись относится к сеансу входа, который WorkBuddy уже заменил, поэтому она больше не работает — вставьте новую',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'Проверка отправляет токен в WorkBuddy и показывает ответ, ничего не сохраняя',
   'Enterprise id (optional)':'ID организации (необязательно)',
   'Save':'Сохранить',
   'Remove':'Удалить',
@@ -495,6 +514,14 @@ const ZH_STATIC = {
   'Paid in so far has to be a number':'累计充值必须是一个数字',
   'WorkBuddy credential':'WorkBuddy 凭据',
   'Paste the accessToken value':'粘贴 accessToken 的值',
+  'Paste the accessToken value, or a refresh token':'粘贴 accessToken 的值，或一个 refresh token',
+  'Check':'检查',
+  'Checking…':'检查中…',
+  'Access and refresh token saved':'已保存 access token 与 refresh token',
+  'Refresh token saved — a fresh access token is fetched with it':'已保存 refresh token —— 会自动换取新的 access token',
+  'Token expiry':'凭据有效期',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'这张凭据属于一个已被 WorkBuddy 更换的登录会话，因此不再有效 —— 请粘贴一张新的',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'检查会把这张凭据发给 WorkBuddy 并回报结果，不会保存',
   'Enterprise id (optional)':'企业 ID（可选）',
   'Save':'保存',
   'Remove':'移除',
@@ -621,6 +648,14 @@ const ZH_HANT_STATIC = {
   'Paid in so far has to be a number':'累計儲值必須是一個數字',
   'WorkBuddy credential':'WorkBuddy 憑證',
   'Paste the accessToken value':'貼上 accessToken 的值',
+  'Paste the accessToken value, or a refresh token':'貼上 accessToken 的值，或一個 refresh token',
+  'Check':'檢查',
+  'Checking…':'檢查中…',
+  'Access and refresh token saved':'已儲存 access token 與 refresh token',
+  'Refresh token saved — a fresh access token is fetched with it':'已儲存 refresh token —— 會自動換取新的 access token',
+  'Token expiry':'憑證有效期限',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'這張憑證屬於一個已被 WorkBuddy 更換的登入工作階段，因此已失效 —— 請貼上一張新的',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'檢查會把這張憑證送給 WorkBuddy 並回報結果，不會儲存',
   'Enterprise id (optional)':'企業 ID（選填）',
   'Save':'儲存',
   'Remove':'移除',
@@ -747,6 +782,14 @@ const JA_STATIC = {
   'Paid in so far has to be a number':'累計入金は数値で入力してください',
   'WorkBuddy credential':'WorkBuddy の認証情報',
   'Paste the accessToken value':'accessToken の値を貼り付け',
+  'Paste the accessToken value, or a refresh token':'accessToken の値、または refresh token を貼り付け',
+  'Check':'確認',
+  'Checking…':'確認中…',
+  'Access and refresh token saved':'access token と refresh token を保存しました',
+  'Refresh token saved — a fresh access token is fetched with it':'refresh token を保存しました — 新しい access token を自動で取得します',
+  'Token expiry':'認証情報の有効期限',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'この認証情報は WorkBuddy が入れ替えたサインインセッションのもので、もう使えません — 新しいものを貼り付けてください',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'確認は WorkBuddy に問い合わせて結果を表示します。保存はしません',
   'Enterprise id (optional)':'エンタープライズ ID（任意）',
   'Save':'保存',
   'Remove':'削除',
@@ -860,6 +903,14 @@ const KO_STATIC = {
   'Paid in so far has to be a number':'누적 충전은 숫자여야 합니다',
   'WorkBuddy credential':'WorkBuddy 자격 증명',
   'Paste the accessToken value':'accessToken 값 붙여넣기',
+  'Paste the accessToken value, or a refresh token':'accessToken 값 또는 refresh token 붙여넣기',
+  'Check':'확인',
+  'Checking…':'확인 중…',
+  'Access and refresh token saved':'access token과 refresh token을 저장했습니다',
+  'Refresh token saved — a fresh access token is fetched with it':'refresh token을 저장했습니다 — 새 access token을 자동으로 받아옵니다',
+  'Token expiry':'자격 증명 만료',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'이 자격 증명은 WorkBuddy가 교체한 로그인 세션의 것이라 더 이상 동작하지 않습니다 — 새로 붙여넣어 주세요',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'확인은 WorkBuddy에 토큰을 보내 결과를 알려줍니다. 저장하지 않습니다',
   'Enterprise id (optional)':'엔터프라이즈 ID (선택)',
   'Save':'저장',
   'Remove':'제거',
@@ -988,6 +1039,14 @@ const UK_STATIC = {
   'Paid in so far has to be a number':'Сума поповнень має бути числом',
   'WorkBuddy credential':'Облікові дані WorkBuddy',
   'Paste the accessToken value':'Вставте значення accessToken',
+  'Paste the accessToken value, or a refresh token':'Вставте значення accessToken або refresh token',
+  'Check':'Перевірити',
+  'Checking…':'Перевірка…',
+  'Access and refresh token saved':'access token і refresh token збережено',
+  'Refresh token saved — a fresh access token is fetched with it':'refresh token збережено — новий access token запитується автоматично',
+  'Token expiry':'Термін дії облікових даних',
+  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'Ці облікові дані належать сеансу входу, який WorkBuddy вже замінив, тому вони більше не працюють — вставте нові',
+  'Check sends this token to WorkBuddy and reports what came back, without saving it':'Перевірка надсилає токен у WorkBuddy і показує відповідь, нічого не зберігаючи',
   'Enterprise id (optional)':'ID організації (необовʼязково)',
   'Save':'Зберегти',
   'Remove':'Видалити',
@@ -1266,6 +1325,11 @@ let options = [];      // [{id,label,status,used}] from get_tray_options
    Read separately from the option list because the row says more than "stored / not stored", and it
    is re-read after every save or clear so the note under it is never a step behind the file. */
 let dsCred = { saved:false, source:'', available:false, topup_total:null };
+/* The stored WorkBuddy credential, described without disclosing it (`kind`, `expires_at`,
+   `session_matches`), and the verdict of the last check, which lives here rather than in Rust because
+   it is a thing to look at, not a thing to keep. */
+let wbCred = {};
+let wbCheck = null;
 /* CyberBrain 的三个业务环不是 provider：没有进程可找、没有窗口可读。计数是工作台自己算好、
    推到它自己云上的那一小份快照，这里只负责去读。下面的 id 就是那份快照的名字，也是这套东西
    唯一需要用户提供的东西 —— 没有任何可探测的痕迹。
@@ -1297,6 +1361,9 @@ function refreshOptions(){
   });
   call('get_deepseek_credential', undefined, null).then(v => {
     if(v && typeof v === 'object'){ dsCred = v; renderAccounts(); }
+  });
+  call('get_workbuddy_credential', undefined, null).then(v => {
+    if(v && typeof v === 'object'){ wbCred = v; renderAccounts(); }
   });
   // 网页里那个 uid 是只读回显、不是密文：19 位数字，抄错了是唯一的坏情况，所以必须能看回去。
   call('get_brain_uid', undefined, null).then(v => {
@@ -1367,22 +1434,54 @@ function agSelect(key, choices, value){
 }
 /* WorkBuddy seals the credential its own app writes with a key only that app holds, so this build can
    never read its balance from the session file. A token pasted here is the only route to that number,
-   and the page is deliberately never told what the token is: the fields are write-only, and the only
-   thing that comes back is whether one is stored. */
+   and the page is deliberately never told what either token is: the fields are write-only, and all
+   that comes back is whether one is stored, when it lapses, and whether it still belongs to the
+   sign-in session WorkBuddy is on now.
+
+   One field takes either token, because which one a person is holding is not something to make them
+   look up. An access token is what the balance endpoint answers to, and it dies with the session it
+   was issued to — which is how a token with a fortnight left on its own clock stops working. A
+   refresh token is exchanged for a new one on every read, so it keeps going. */
+const WB_SAVED_ACCESS = 'Credential saved — the balance is read with it';
+const WB_SAVED_REFRESH = 'Refresh token saved — a fresh access token is fetched with it';
+const WB_SAVED_BOTH = 'Access and refresh token saved';
+const WB_EXPIRY = 'Token expiry';
+const WB_STALE_SESSION = 'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one';
+const WB_CHECK = 'Check';
+const WB_CHECKING = 'Checking…';
+const WB_CHECK_HINT = 'Check sends this token to WorkBuddy and reports what came back, without saving it';
+const WB_PLACEHOLDER = 'Paste the accessToken value, or a refresh token';
+
 function workbuddyCredentialRow(p){
-  const savedNote = 'Credential saved — the balance is read with it';
-  const emptyNote = 'Paste a credential to read the Credits balance';
+  const st = wbCred || {};
   const saved = !!p.credential;
+  const kind = st.kind === 'both' ? WB_SAVED_BOTH
+    : st.kind === 'refresh' ? WB_SAVED_REFRESH
+    : WB_SAVED_ACCESS;
+  const emptyNote = 'Paste a credential to read the Credits balance';
+  let note = saved ? ui(kind, kind) : ui(emptyNote, emptyNote);
+  if(saved && st.expires_at) note += ' · ' + ui(WB_EXPIRY, WB_EXPIRY) + ' ' + st.expires_at;
+  // A stored token from a replaced session reads as valid and is not. Saying so on the row is the
+  // whole point: waiting for the notch to report a balance that never arrives is how an afternoon
+  // gets spent.
+  if(saved && st.session_matches === false) note = ui(WB_STALE_SESSION, WB_STALE_SESSION);
+  const verdict = wbCheck
+    ? '<div class="acct-note' + (wbCheck.busy || wbCheck.ok ? '' : ' bad') + '" data-wb-verdict>'
+      + esc(wbCheck.note || '') + '</div>'
+    : '<div class="acct-note" data-wb-verdict hidden></div>';
   return '<div class="acct-col"><span>' + esc(ui('WorkBuddy credential', 'WorkBuddy credential')) + '</span>'
     + '<input class="cred" data-wb="token" type="password" autocomplete="off" spellcheck="false" placeholder="'
-    + esc(ui('Paste the accessToken value', 'Paste the accessToken value')) + '">'
+    + esc(ui(WB_PLACEHOLDER, WB_PLACEHOLDER)) + '">'
     + '<input class="cred" data-wb="enterprise" type="text" autocomplete="off" spellcheck="false" placeholder="'
     + esc(ui('Enterprise id (optional)', 'Enterprise id (optional)')) + '">'
     + '<div class="acct-actions">'
+    + '<button class="mini" data-wb-check>' + esc(ui(WB_CHECK, WB_CHECK)) + '</button>'
     + '<button class="mini" data-wb-save>' + esc(ui('Save', 'Save')) + '</button>'
     + (saved ? '<button class="mini ghost" data-wb-clear>' + esc(ui('Remove', 'Remove')) + '</button>' : '')
     + '</div>'
-    + '<div class="acct-note">' + esc(ui(saved ? savedNote : emptyNote, saved ? savedNote : emptyNote)) + '</div>'
+    + '<div class="acct-note">' + esc(note) + '</div>'
+    + verdict
+    + '<div class="acct-note">' + esc(ui(WB_CHECK_HINT, WB_CHECK_HINT)) + '</div>'
     + '</div>';
 }
 /* 三句话，各自都要说实话：
@@ -1519,19 +1618,60 @@ const accountsPane = document.getElementById('pane-accounts');
 /* The pasted credential, which is never read back: the page sends it once and then only ever learns
    whether one is stored. Saving refreshes the option list rather than patching a local flag, so the
    button row always describes what Rust actually holds. */
-function saveWorkbuddyCredential(){
-  const box = accountsPane.querySelector('[data-wb="token"]');
-  const enterprise = accountsPane.querySelector('[data-wb="enterprise"]');
-  const token = box ? box.value : '';
-  if(!token.trim()){
-    strip(ui('Paste the accessToken value', 'Paste the accessToken value'));
+function wbField(name){ return accountsPane.querySelector('[data-wb="' + name + '"]'); }
+function wbInput(){
+  const box = wbField('token');
+  const enterprise = wbField('enterprise');
+  return { token: (box ? box.value : '').trim(), enterpriseId: (enterprise ? enterprise.value : '').trim() };
+}
+/* The verdict is written into the row instead of re-rendering it. `renderAccounts` rebuilds the block
+   from scratch, and the field being checked holds the token — re-rendering to show an answer would
+   throw away the thing the answer is about. */
+function wbVerdict(state){
+  wbCheck = state;
+  const el = accountsPane.querySelector('[data-wb-verdict]');
+  if(!el) return;
+  el.textContent = state ? (state.note || '') : '';
+  el.hidden = !state;
+  el.classList.toggle('bad', !!state && !state.busy && !state.ok);
+}
+/* Checking and saving are separate on purpose. A token that fails does not fail with a reason anybody
+   can act on, and finding out by waiting for the notch to stay empty is no way to find out — but
+   trying a token should not have to mean committing to it either. */
+function checkWorkbuddyCredential(){
+  const input = wbInput();
+  if(!input.token){
+    strip(ui(WB_PLACEHOLDER, WB_PLACEHOLDER));
     return;
   }
-  invoke('set_workbuddy_credential', { token: token, enterpriseId: enterprise ? enterprise.value : '', userId: '' })
-    .then(() => { if(box) box.value = ''; if(enterprise) enterprise.value = ''; refreshOptions(); toast(); })
-    .catch(e => strip('set_workbuddy_credential failed: ' + errText(e)));
+  wbVerdict({ ok:false, busy:true, note: ui(WB_CHECKING, WB_CHECKING) });
+  invoke('check_workbuddy_credential', { token: input.token, enterpriseId: input.enterpriseId, userId: '' })
+    .then(v => wbVerdict(v && typeof v === 'object' ? v : { ok:false, note:'The check answered nothing readable' }))
+    .catch(e => wbVerdict({ ok:false, note: errText(e) }));
+}
+/* Save verifies first, on the Rust side, and stores the pair the platform last issued rather than the
+   string that was pasted. A credential the server refused is not written at all — so the failure
+   arrives here as an error, carrying the server's own sentence. */
+function saveWorkbuddyCredential(){
+  const input = wbInput();
+  if(!input.token){
+    strip(ui(WB_PLACEHOLDER, WB_PLACEHOLDER));
+    return;
+  }
+  wbVerdict({ ok:false, busy:true, note: ui(WB_CHECKING, WB_CHECKING) });
+  invoke('set_workbuddy_credential', { token: input.token, enterpriseId: input.enterpriseId, userId: '' })
+    .then(() => {
+      wbCheck = null;
+      const box = wbField('token');
+      const enterprise = wbField('enterprise');
+      if(box) box.value = '';
+      if(enterprise) enterprise.value = '';
+      refreshOptions(); toast();
+    })
+    .catch(e => wbVerdict({ ok:false, note: errText(e) }));
 }
 function clearWorkbuddyCredential(){
+  wbCheck = null;
   invoke('clear_workbuddy_credential')
     .then(() => { refreshOptions(); toast(); })
     .catch(e => strip('clear_workbuddy_credential failed: ' + errText(e)));
@@ -1592,6 +1732,7 @@ function clearDeepseekCredential(){
 accountsPane.addEventListener('click', e => {
   const np = e.target.closest('[data-np]');
   if(np){ toggleNotch(np.dataset.np); return; }
+  if(e.target.closest('[data-wb-check]')){ checkWorkbuddyCredential(); return; }
   if(e.target.closest('[data-wb-save]')){ saveWorkbuddyCredential(); return; }
   if(e.target.closest('[data-wb-clear]')){ clearWorkbuddyCredential(); return; }
   if(e.target.closest('[data-ds-save]')){ saveDeepseekCredential(); return; }

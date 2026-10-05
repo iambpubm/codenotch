@@ -1446,25 +1446,34 @@ fn set_antigravity_prefs(app: AppHandle, limit: String, model: String) -> Antigr
 
 /// What the settings page is told about the pasted WorkBuddy credential.
 ///
-/// It never carries the token. The page cannot display it, cannot round-trip it, and cannot leak it
-/// into a DOM node or a log line — all it is told is whether one is stored, how long it is, and which
-/// kind of account it addresses. Reporting the length is enough for a person to recognise the token
-/// they pasted without the value ever leaving Rust.
+/// It never carries either token. The page cannot display them, cannot round-trip them, and cannot
+/// leak them into a DOM node or a log line — all it is told is whether one is stored, how long it is,
+/// which kind of account it addresses, and the two facts that decide whether it still works: when its
+/// access token lapses, and whether it belongs to the session WorkBuddy is on now. Reporting the
+/// length is enough for a person to recognise the token they pasted without the value ever leaving
+/// Rust.
 #[derive(serde::Serialize)]
 struct WorkbuddyCredentialState {
     saved: bool,
     enterprise: bool,
     token_chars: usize,
+    /// "access", "refresh" or "both" — what is actually stored, which decides what happens next.
+    kind: String,
+    /// When the stored access token says it lapses, local time.
+    expires_at: Option<String>,
+    /// Whether it belongs to the session the app is still using. `None` = one side was unavailable.
+    session_matches: Option<bool>,
 }
 
 fn workbuddy_credential_state() -> WorkbuddyCredentialState {
-    match workbuddy::read_credential() {
-        Some(credential) => WorkbuddyCredentialState {
-            saved: true,
-            enterprise: !credential.enterprise_id.trim().is_empty(),
-            token_chars: credential.access_token.trim().len(),
-        },
-        None => WorkbuddyCredentialState { saved: false, enterprise: false, token_chars: 0 },
+    let summary = workbuddy::summarize();
+    WorkbuddyCredentialState {
+        saved: summary.is_some(),
+        enterprise: summary.as_ref().map(|s| s.enterprise).unwrap_or(false),
+        token_chars: summary.as_ref().map(|s| s.chars).unwrap_or(0),
+        kind: summary.as_ref().map(|s| s.kind.clone()).unwrap_or_default(),
+        expires_at: summary.as_ref().and_then(|s| s.expires_at.clone()),
+        session_matches: summary.as_ref().and_then(|s| s.session_matches),
     }
 }
 
@@ -1473,19 +1482,58 @@ fn get_workbuddy_credential() -> WorkbuddyCredentialState {
     workbuddy_credential_state()
 }
 
-/// Stores a pasted token and asks the provider to re-read on the spot, so the balance appears without
-/// waiting out the poll interval. The reply is the state as stored, not as requested.
+/// Sends a candidate credential to WorkBuddy and reports what came back, without storing anything.
+///
+/// This exists because the failure it diagnoses is invisible from here: a token can carry an expiry
+/// days away and still be refused, and the reply that says so names neither the reason nor the fix.
+/// The check reads the token's own claims, compares its sign-in session against the one the desktop
+/// app is using, and then sends it to the billing endpoint — so the answer the page shows is the
+/// server's, explained.
+///
+/// The request is blocking, so it runs off the UI thread: a check that freezes the settings window
+/// for the length of a network timeout would be a worse bug than the one it reports.
 #[tauri::command]
-fn set_workbuddy_credential(
+async fn check_workbuddy_credential(
     token: String,
     enterprise_id: Option<String>,
     user_id: Option<String>,
+    domain: Option<String>,
+) -> Result<workbuddy::CredentialCheck, String> {
+    let enterprise_id = enterprise_id.unwrap_or_default();
+    let user_id = user_id.unwrap_or_default();
+    let domain = domain.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        workbuddy::check_credential(&token, &enterprise_id, &user_id, &domain)
+    })
+    .await
+    .map_err(|e| format!("the check did not finish: {e}"))
+}
+
+/// Stores a pasted token and asks the provider to re-read on the spot, so the balance appears without
+/// waiting out the poll interval. The reply is the state as stored, not as requested.
+///
+/// Verified before it is written. The credential file existing is what tells the card to use it, so
+/// writing one the server has just refused would only move the confusion out of the field and into
+/// the notch — which is the exact loop this replaces. A credential that could not be checked because
+/// the network was down is still stored: an offline machine has to be able to take what it is given.
+#[tauri::command]
+async fn set_workbuddy_credential(
+    token: String,
+    enterprise_id: Option<String>,
+    user_id: Option<String>,
+    domain: Option<String>,
 ) -> Result<WorkbuddyCredentialState, String> {
-    workbuddy::save_credential(
-        &token,
-        enterprise_id.as_deref().unwrap_or(""),
-        user_id.as_deref().unwrap_or(""),
-    )?;
+    let enterprise_id = enterprise_id.unwrap_or_default();
+    let user_id = user_id.unwrap_or_default();
+    let domain = domain.unwrap_or_default();
+    let checked = tauri::async_runtime::spawn_blocking(move || {
+        workbuddy::verify_and_save(&token, &enterprise_id, &user_id, &domain)
+    })
+    .await
+    .map_err(|e| format!("the check did not finish: {e}"))?;
+    // The check's own sentence is the error when it was refused — it is the server's, and it is the
+    // only thing here that knows which refusal this was.
+    checked?;
     Ok(workbuddy_credential_state())
 }
 
@@ -2029,6 +2077,7 @@ fn main() {
             get_antigravity_prefs,
             set_antigravity_prefs,
             get_workbuddy_credential,
+            check_workbuddy_credential,
             set_workbuddy_credential,
             clear_workbuddy_credential,
             get_deepseek_credential,

@@ -89,6 +89,23 @@ const POLL_SECS: u64 = 300;
 /// The WorkBuddy desktop app is looked for again this often while it is not installed.
 const ABSENT_POLL_SECS: u64 = 600;
 const FETCH_TIMEOUT_SECS: u64 = 12;
+/// The token-renewal route.
+///
+/// Found by probing, not by reading a document: the path the extension's own source names —
+/// `/v2/auth/token/refresh` — is not routed anywhere on this platform, while
+/// `/v2/plugin/auth/token/refresh` answers on every core-API origin with the platform's own refusal
+/// in its own words (`12153:refresh token failed:10000:token format error`). The `plugin` segment is
+/// the path prefix the extension's own configuration carries.
+const REFRESH_PATH: &str = "/v2/plugin/auth/token/refresh";
+/// The `X-Domain` the core API is addressed under: the CN SaaS primary origin, and the value the
+/// desktop app records in its own session file as `auth.domain`.
+const DEFAULT_DOMAIN: &str = "www.workbuddy.cn";
+/// How close to its stated expiry an access token is renewed.
+///
+/// A day, because a renewal is one request and the alternative is a poll that goes out on a token
+/// with minutes left on it. It is a margin rather than a deadline: nothing here waits for a token to
+/// actually lapse before replacing it.
+const RENEW_MARGIN_MS: u64 = 24 * 60 * 60 * 1000;
 
 const AUTH_FILE_NAME: &str = "workbuddy-desktop.info";
 const LOGOUT_MARKER_SUFFIX: &str = ".logged-out";
@@ -197,21 +214,41 @@ fn credential_path() -> PathBuf {
     crate::config::config_path().with_file_name("workbuddy-credential.json")
 }
 
-/// What the user pasted. Only the token is required — everything else is used when it is there. The
-/// enterprise id is the one field that changes the request, since it selects the endpoint.
+/// What the user pasted. Either token is enough on its own — everything else is used when it is
+/// there. The enterprise id is the one field that changes the request, since it selects the endpoint.
+///
+/// The two tokens are not interchangeable, and which one is stored changes what happens a month
+/// later. An **access** token is what the billing endpoint answers to; it belongs to one sign-in
+/// session, and the app signing in again replaces that session and kills the token on the spot — its
+/// own `exp` claim notwithstanding. A **refresh** token is spent at the renewal route to mint a new
+/// pair, and it is the one that survives. So a credential holding a refresh token keeps itself alive
+/// instead of going quietly stale, which is the whole difference between the two.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ManualCredential {
     #[serde(default)]
     pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: String,
     #[serde(default)]
     pub enterprise_id: String,
     #[serde(default)]
     pub user_id: String,
     #[serde(default)]
     pub account_type: String,
+    /// The `X-Domain` the renewal route is addressed under. Written when a renewal happens; the
+    /// platform default when the file predates this field.
+    #[serde(default)]
+    pub domain: String,
 }
 
-/// The pasted credential, if one is stored and usable. A file with a blank token counts as none, so
+impl ManualCredential {
+    fn domain_or_default(&self) -> String {
+        let domain = self.domain.trim();
+        if domain.is_empty() { DEFAULT_DOMAIN.to_string() } else { domain.to_string() }
+    }
+}
+
+/// The pasted credential, if one is stored and usable. A file with no token at all counts as none, so
 /// "saved" and "will be sent" can never disagree.
 pub fn read_credential() -> Option<ManualCredential> {
     let text = std::fs::read_to_string(credential_path()).ok()?;
@@ -219,12 +256,126 @@ pub fn read_credential() -> Option<ManualCredential> {
     // Normalised on the way in as well as on the way out, so the promise above holds for a file that
     // was hand-edited as well as for one this program wrote: a token field holding the scheme and
     // nothing else is no credential, not a credential named "Bearer".
-    credential.access_token = normalized_token(&credential.access_token)?;
+    credential.access_token = normalized_token(&credential.access_token).unwrap_or_default();
+    credential.refresh_token = normalized_token(&credential.refresh_token).unwrap_or_default();
+    if credential.access_token.is_empty() && credential.refresh_token.is_empty() {
+        return None;
+    }
     Some(credential)
+}
+
+/// Which of the two things a pasted string is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    /// A JWT — what the billing endpoint takes in `Authorization`.
+    Access,
+    /// An opaque handle to spend at the renewal route.
+    Refresh,
+    /// Nothing to paste.
+    Empty,
+}
+
+impl TokenKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TokenKind::Access => "access",
+            TokenKind::Refresh => "refresh",
+            TokenKind::Empty => "empty",
+        }
+    }
+}
+
+/// Tells the two apart by shape, so one field can take either and nothing is asked of the user that
+/// they would have to be told twice.
+///
+/// An access token is a JWT: exactly three dot-separated segments. A refresh token is an opaque
+/// handle with no dots in it. The test is the shape and not a successful local decode, because this
+/// program has no business verifying a signature — the server is the only party whose opinion
+/// counts, and a token whose claims happened not to parse is still an access token to send.
+pub fn classify(raw: &str) -> TokenKind {
+    let Some(token) = normalized_token(raw) else { return TokenKind::Empty };
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() == 3 && parts.iter().all(|p| !p.is_empty()) {
+        TokenKind::Access
+    } else {
+        TokenKind::Refresh
+    }
+}
+
+/// Second JWT segment (base64url) → claims.
+///
+/// Read for the two timestamps the card prints and the session id it compares, and for nothing else.
+/// Nothing is verified here: a signature this program checked would still be the server's to accept
+/// or refuse, and pretending otherwise would only make a local decoder look like an authority.
+fn jwt_claims(token: &str) -> Option<serde_json::Value> {
+    let part = token.split('.').nth(1)?;
+    let raw = crate::antigravity::b64_decode(part)?;
+    serde_json::from_slice(&raw).ok()
+}
+
+/// A numeric JWT claim in milliseconds. `iat`/`exp` are seconds since the epoch; anything that is
+/// not a positive number is treated as absent rather than as 1970.
+fn claim_ms(claims: &serde_json::Value, key: &str) -> Option<u64> {
+    let secs = claims.get(key)?.as_f64()?;
+    if !secs.is_finite() || secs <= 0.0 {
+        return None;
+    }
+    Some((secs * 1000.0) as u64)
 }
 
 pub fn credential_saved() -> bool {
     read_credential().is_some()
+}
+
+/// The stored credential, described without disclosing it. Nothing here is a token and nothing here
+/// can be turned back into one; it is what the settings row needs to tell a person what they are
+/// actually holding.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CredentialSummary {
+    /// "access", "refresh" or "both".
+    pub kind: String,
+    /// Total characters held across both tokens — enough to recognise a paste, useless as a value.
+    pub chars: usize,
+    pub enterprise: bool,
+    /// When the stored access token says it lapses, in local time. Absent when there is nothing to
+    /// read it from.
+    pub expires_at: Option<String>,
+    /// Whether that token belongs to the sign-in session the app is using right now.
+    ///
+    /// This is the field worth having. A stored access token can read as valid for another fortnight
+    /// and still be refused, because the app signing in again retires the session it came from and
+    /// nothing in the token says so. `None` means one of the two ids was unavailable, which is not
+    /// the same answer as "they differ".
+    pub session_matches: Option<bool>,
+}
+
+pub fn summarize() -> Option<CredentialSummary> {
+    let credential = read_credential()?;
+    let has_access = !credential.access_token.is_empty();
+    let has_refresh = !credential.refresh_token.is_empty();
+    let claims = if has_access { jwt_claims(&credential.access_token) } else { None };
+    let session_id = claims
+        .as_ref()
+        .and_then(|c| c.get("sid"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let session_matches = match (session_id, desktop_session_state()) {
+        (Some(a), Some(b)) => Some(a == b),
+        _ => None,
+    };
+    Some(CredentialSummary {
+        kind: match (has_access, has_refresh) {
+            (true, true) => "both",
+            (false, true) => "refresh",
+            _ => "access",
+        }
+        .to_string(),
+        chars: credential.access_token.len() + credential.refresh_token.len(),
+        enterprise: !credential.enterprise_id.trim().is_empty(),
+        expires_at: claims.as_ref().and_then(|c| claim_ms(c, "exp")).map(format_local),
+        session_matches,
+    })
 }
 
 /// The token as it should be stored, or `None` when there is nothing to store.
@@ -247,17 +398,35 @@ fn normalized_token(raw: &str) -> Option<String> {
 
 /// Writes the credential, and nothing else. Returns the state that was actually stored so the caller
 /// reports what happened rather than what it asked for.
-pub fn save_credential(access_token: &str, enterprise_id: &str, user_id: &str) -> Result<(), String> {
-    let Some(token) = normalized_token(access_token) else {
+pub fn save_credential(
+    access_token: &str,
+    refresh_token: &str,
+    enterprise_id: &str,
+    user_id: &str,
+    domain: &str,
+) -> Result<(), String> {
+    let access = normalized_token(access_token).unwrap_or_default();
+    let refresh = normalized_token(refresh_token).unwrap_or_default();
+    if access.is_empty() && refresh.is_empty() {
         return Err("the credential is empty".into());
-    };
+    }
     let credential = ManualCredential {
-        access_token: token,
+        access_token: access,
+        refresh_token: refresh,
         enterprise_id: enterprise_id.trim().to_string(),
         user_id: user_id.trim().to_string(),
         account_type: if enterprise_id.trim().is_empty() { "personal".into() } else { "enterprise".into() },
+        domain: if domain.trim().is_empty() { DEFAULT_DOMAIN.into() } else { domain.trim().to_string() },
     };
-    let text = serde_json::to_string_pretty(&credential).map_err(|e| e.to_string())?;
+    write_credential(&credential)?;
+    request_refresh();
+    Ok(())
+}
+
+/// The write itself, without the refresh request — split out because the reader renews a credential
+/// in place, and asking for a refresh from inside a read would be a loop.
+fn write_credential(credential: &ManualCredential) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(credential).map_err(|e| e.to_string())?;
     // The directory is the config's, and on a fresh install nothing has written there yet: the
     // caches below only exist once the provider that owns them has something to cache, and a config
     // is only written when a setting changes. Pasting a credential can be the very first thing a
@@ -266,9 +435,7 @@ pub fn save_credential(access_token: &str, enterprise_id: &str, user_id: &str) -
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, text).map_err(|e| e.to_string())?;
-    request_refresh();
-    Ok(())
+    std::fs::write(path, text).map_err(|e| e.to_string())
 }
 
 /// Removes the file. A missing file is success: the point is the state afterwards, not who made it.
@@ -305,6 +472,429 @@ fn session_from_credential(credential: &ManualCredential) -> Session {
         },
         expires_at: 0,
     }
+}
+
+/// The desktop app's own `auth.sessionState` — the id of the sign-in session it is currently using.
+///
+/// This one field is not sealed even in 5.6.0, where the token beside it is, and it is the only way
+/// to separate the two failures that look identical from the outside: a token that has aged out, and
+/// a token whose session was replaced when the app signed in again. The second one is the one that
+/// costs somebody an hour, because the token's own `exp` still reads days away and nothing in the
+/// reply says "session".
+pub fn desktop_session_state() -> Option<String> {
+    for dir in auth_dirs() {
+        let Some(text) = read_regular_file(&auth_file_in(&dir)) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let state = value
+            .get("auth")
+            .and_then(|a| a.get("sessionState"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !state.is_empty() {
+            return Some(state);
+        }
+    }
+    None
+}
+
+// ---------------- renewing a credential ----------------
+
+/// A fresh pair, as the core API hands it back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Renewed {
+    pub access_token: String,
+    pub refresh_token: String,
+    /// ms epoch; 0 = the reply named no expiry.
+    pub expires_at: u64,
+}
+
+/// Why a renewal did not happen. `Refused` is kept separate from `Unavailable` because only the
+/// first means the credential itself is finished; a network that was down is worth trying again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenewErr {
+    /// The server declined the handle, in its own words.
+    Refused(String),
+    /// The request never got an answer worth reading.
+    Unavailable(String),
+    /// An answer arrived but carried no token. A bug on one side or the other, not a verdict.
+    Shape(String),
+}
+
+impl RenewErr {
+    fn note(&self) -> String {
+        match self {
+            RenewErr::Refused(why) => format!("WorkBuddy refused the refresh token — {why}"),
+            RenewErr::Unavailable(why) => format!("Could not reach WorkBuddy to renew the credential — {why}"),
+            RenewErr::Shape(why) => format!("WorkBuddy answered the renewal with no token — {why}"),
+        }
+    }
+
+    fn refused(&self) -> bool {
+        matches!(self, RenewErr::Refused(_))
+    }
+}
+
+/// Spends a refresh token at the renewal route for a new pair.
+///
+/// The header contract is the one the extension's own code uses: the handle travels in
+/// `X-Refresh-Token`, the origin in `X-Domain`, and `X-Auth-Refresh-Source` names where the request
+/// came from so an operator reading a log can tell this apart from the app's own traffic.
+fn renew(refresh_token: &str, domain: &str) -> Result<Renewed, RenewErr> {
+    let Some(handle) = normalized_token(refresh_token) else {
+        return Err(RenewErr::Shape("there is no refresh token to spend".into()));
+    };
+    let domain = if domain.trim().is_empty() { DEFAULT_DOMAIN } else { domain.trim() };
+    let answer = ureq::post(&format!("{ENDPOINT}{REFRESH_PATH}"))
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .set("Accept", "application/json")
+        .set("User-Agent", USER_AGENT)
+        .set("X-Domain", domain)
+        .set("X-Refresh-Token", &handle)
+        .set("X-Auth-Refresh-Source", "plugin")
+        .send_string("{}");
+    let body: serde_json::Value = match answer {
+        Ok(r) => {
+            let status = r.status();
+            if (300..400).contains(&status) {
+                return Err(RenewErr::Unavailable(format!("HTTP {status} redirect refused")));
+            }
+            r.into_json().map_err(|e| RenewErr::Unavailable(format!("parse: {e}")))?
+        }
+        // A refusal here is an ordinary reply, not a transport failure: the platform answers a bad
+        // handle with a status and a JSON body naming the fault.
+        Err(ureq::Error::Status(code, r)) => {
+            let text = r.into_string().unwrap_or_default();
+            return Err(parse_renew_failure(code, &text));
+        }
+        Err(e) => return Err(RenewErr::Unavailable(format!("{e}"))),
+    };
+    parse_renew_body(&body)
+}
+
+/// A refusal, kept in the server's own words.
+///
+/// The reply is `{"code":12153,"msg":"12153:refresh token failed:10000:token format error"}`, and that
+/// `msg` is the entire diagnosis: it separates a malformed handle from a session that has ended, and
+/// the two call for different things from the person reading it. Replacing it with a sentence of this
+/// program's own would throw away the only part that knows which happened.
+fn parse_renew_failure(status: u16, text: &str) -> RenewErr {
+    let message = serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("msg").and_then(|m| m.as_str()).map(str::to_string))
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty());
+    match message {
+        Some(why) => RenewErr::Refused(why),
+        None => RenewErr::Refused(format!("HTTP {status}")),
+    }
+}
+
+/// The reply, unwrapped.
+///
+/// The `code` is checked before the payload because a refusal can arrive under a 200 with the reason
+/// in the body — which is exactly how the platform reports a spend that was declined.
+fn parse_renew_body(body: &serde_json::Value) -> Result<Renewed, RenewErr> {
+    if let Some(code) = body.get("code").and_then(|c| c.as_f64()) {
+        if code != 0.0 && code != 200.0 {
+            let why = body.get("msg").and_then(|m| m.as_str()).unwrap_or("").trim().to_string();
+            return Err(RenewErr::Refused(if why.is_empty() { format!("code {code}") } else { why }));
+        }
+    }
+    let data = body.get("data").ok_or_else(|| RenewErr::Shape("the reply carried no data".into()))?;
+    // Some deployments answer one envelope deeper; take whichever level actually holds the token.
+    let data = if data.get("accessToken").is_some() || data.get("access_token").is_some() {
+        data
+    } else {
+        data.get("data").unwrap_or(data)
+    };
+    let pick = |keys: &[&str]| -> String {
+        keys.iter()
+            .find_map(|k| data.get(*k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let access_token = pick(&["accessToken", "access_token"]);
+    if access_token.is_empty() {
+        return Err(RenewErr::Shape("the reply carried no access token".into()));
+    }
+    // `expiresAt` when the server states it, otherwise `expiresIn` counted from now — the same
+    // conversion the app's own code makes, so the number this program prints matches the app's.
+    let expires_at = match data.get("expiresAt").and_then(|v| v.as_f64()) {
+        Some(ms) if ms > 0.0 => ms as u64,
+        _ => data
+            .get("expiresIn")
+            .and_then(|v| v.as_f64())
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .map(|s| now_ms().saturating_add((s * 1000.0) as u64))
+            .unwrap_or(0),
+    };
+    Ok(Renewed { access_token, refresh_token: pick(&["refreshToken", "refresh_token"]), expires_at })
+}
+
+/// Brings a stored credential up to date before it is used.
+///
+/// A credential holding a refresh token outlives the app signing in again, so this is the difference
+/// between one that keeps working and one that goes quietly stale. It does nothing while the access
+/// token still has a comfortable margin left: renewing on every poll would be three hundred requests
+/// a day for no gain. An access token with no readable expiry is used as it is, and left to the retry
+/// below rather than renewed on a guess.
+fn freshen(credential: &mut ManualCredential) -> Option<String> {
+    if credential.refresh_token.trim().is_empty() {
+        return None;
+    }
+    let due = match normalized_token(&credential.access_token) {
+        None => true,
+        Some(access) => match jwt_claims(&access).as_ref().and_then(|c| claim_ms(c, "exp")) {
+            Some(exp) => exp <= now_ms().saturating_add(RENEW_MARGIN_MS),
+            None => false,
+        },
+    };
+    if !due {
+        return None;
+    }
+    // Hoisted into a local rather than built inline: the handle and the domain are both read off the
+    // credential that the arm below writes back to, and a temporary in a match scrutinee outlives the
+    // call it was made for. Naming it removes the question.
+    let domain = credential.domain_or_default();
+    match renew(&credential.refresh_token, &domain) {
+        Ok(fresh) => {
+            credential.access_token = fresh.access_token;
+            if !fresh.refresh_token.is_empty() {
+                credential.refresh_token = fresh.refresh_token;
+            }
+            write_credential(credential).ok()?;
+            None
+        }
+        Err(e) => Some(e.note()),
+    }
+}
+
+// ---------------- checking a credential before it is stored ----------------
+
+/// What the settings page is told about a candidate credential, before it is stored or after.
+///
+/// It never carries either token. Everything here is something a person can act on: when the token
+/// was issued and when it says it lapses, which sign-in session it belongs to and whether that is
+/// still the one the app is using, and what the server said when it was actually sent.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CredentialCheck {
+    /// What the pasted string was read as: "access", "refresh" or "empty".
+    pub kind: String,
+    /// True only when the server answered with a balance.
+    pub ok: bool,
+    /// A one-word verdict: ok, renewed, refused, unverified or empty.
+    pub status: String,
+    /// The sentence to show. English, like every other note this program writes.
+    pub note: String,
+    /// The token's own `iat` / `exp`, in local time. Absent when there is nothing to read them from.
+    pub issued_at: Option<String>,
+    pub expires_at: Option<String>,
+    /// The sign-in session this token belongs to, and the one the app is using now.
+    pub session_id: Option<String>,
+    pub app_session_id: Option<String>,
+    /// Whether those agree. `None` when either is missing, which is not the same answer as "no".
+    pub session_matches: Option<bool>,
+    /// Credits left, when the check got that far.
+    pub remaining: Option<f64>,
+}
+
+impl CredentialCheck {
+    /// Whether the server actively turned this credential down.
+    ///
+    /// The distinction matters for what happens next: a refusal is not stored, because the file
+    /// existing is what tells the card to use a credential, and writing a refused one in would only
+    /// move the confusion out of the field and into the notch.
+    pub fn rejected(&self) -> bool {
+        self.status == "refused" || self.status == "empty"
+    }
+
+    fn blank(kind: TokenKind, app_session_id: Option<String>) -> Self {
+        CredentialCheck {
+            kind: kind.as_str().to_string(),
+            ok: false,
+            status: "empty".to_string(),
+            note: String::new(),
+            issued_at: None,
+            expires_at: None,
+            session_id: None,
+            app_session_id,
+            session_matches: None,
+            remaining: None,
+        }
+    }
+}
+
+/// A check plus what a save would write: the pair the platform last issued, which is the pasted one
+/// unless a renewal replaced it.
+struct Evaluation {
+    check: CredentialCheck,
+    access: String,
+    refresh: String,
+    domain: String,
+}
+
+/// A short form of a session id for a sentence. Enough to see two of them differ, which is the whole
+/// job — the full id is shown beside it.
+fn short_id(id: &Option<String>) -> String {
+    match id {
+        Some(id) if id.len() > 8 => format!("{}…", &id[..8]),
+        Some(id) => id.clone(),
+        None => "?".to_string(),
+    }
+}
+
+/// Sends the candidate to the server and reports what came back.
+///
+/// The server is the only authority here, so this always ends in a request. The local reads — the
+/// claims, the session comparison — exist to explain a refusal, not to predict one: a token with
+/// days left on its own clock is exactly the one that gets refused for reasons the clock cannot see.
+fn evaluate(token: &str, enterprise_id: &str, user_id: &str, domain: &str) -> Evaluation {
+    let kind = classify(token);
+    let mut check = CredentialCheck::blank(kind, desktop_session_state());
+    let domain = if domain.trim().is_empty() { DEFAULT_DOMAIN.to_string() } else { domain.trim().to_string() };
+    let mut access = String::new();
+    let mut refresh = String::new();
+    // Collected in one place so every early return still carries the domain a save would write.
+    let done = |check: CredentialCheck, access: String, refresh: String| Evaluation {
+        check,
+        access,
+        refresh,
+        domain: domain.clone(),
+    };
+
+    match kind {
+        TokenKind::Empty => {
+            check.note = "Nothing was pasted".to_string();
+            return done(check, access, refresh);
+        }
+        TokenKind::Access => access = normalized_token(token).unwrap_or_default(),
+        TokenKind::Refresh => refresh = normalized_token(token).unwrap_or_default(),
+    }
+
+    if kind == TokenKind::Access {
+        let claims = jwt_claims(&access);
+        check.issued_at = claims.as_ref().and_then(|c| claim_ms(c, "iat")).map(format_local);
+        check.expires_at = claims.as_ref().and_then(|c| claim_ms(c, "exp")).map(format_local);
+        check.session_id = claims
+            .as_ref()
+            .and_then(|c| c.get("sid"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        check.session_matches = match (&check.session_id, &check.app_session_id) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+    }
+
+    // A refresh token is worthless until it has been spent, so the exchange is the check.
+    if kind == TokenKind::Refresh {
+        match renew(&refresh, &domain) {
+            Ok(fresh) => {
+                check.status = "renewed".to_string();
+                check.note = "Refresh token accepted — a new access token was issued for it".to_string();
+                check.expires_at =
+                    if fresh.expires_at > 0 { Some(format_local(fresh.expires_at)) } else { None };
+                access = fresh.access_token;
+                if !fresh.refresh_token.is_empty() {
+                    refresh = fresh.refresh_token;
+                }
+            }
+            Err(e) => {
+                check.status = if e.refused() { "refused" } else { "unverified" }.to_string();
+                check.note = e.note();
+                return done(check, access, refresh);
+            }
+        }
+    }
+
+    // The billing call settles it either way, including for a token a renewal just replaced.
+    let session = Session {
+        token: access.clone(),
+        user_id: user_id.trim().to_string(),
+        enterprise_id: enterprise_id.trim().to_string(),
+        department_info: String::new(),
+        domain: String::new(),
+        account_type: if enterprise_id.trim().is_empty() { "personal".to_string() } else { "enterprise".to_string() },
+        expires_at: 0,
+    };
+    match fetch_once(&session) {
+        Ok(body) => {
+            let reading = if session.enterprise_id.is_empty() {
+                parse_personal_usage(&body)
+            } else {
+                parse_enterprise_usage(&body)
+            };
+            match reading {
+                Ok(Reading::Metered { remaining, .. }) => {
+                    check.ok = true;
+                    check.status = if kind == TokenKind::Refresh { "renewed" } else { "ok" }.to_string();
+                    check.remaining = Some(remaining);
+                    check.note = format!("Verified — {remaining:.0} credits left");
+                }
+                Ok(Reading::Unmetered(note)) => {
+                    check.ok = true;
+                    check.status = if kind == TokenKind::Refresh { "renewed" } else { "ok" }.to_string();
+                    check.note = if note.is_empty() { "Verified".to_string() } else { note };
+                }
+                Err(why) => {
+                    check.status = "unverified".to_string();
+                    check.note = why;
+                }
+            }
+        }
+        Err(FetchErr::NeedsAuth) => {
+            check.ok = false;
+            check.status = "refused".to_string();
+            check.note = match check.session_matches {
+                // The failure that costs an hour: the token still says it has days to run, and the
+                // only thing wrong with it is that it belongs to a session that no longer exists.
+                Some(false) => format!(
+                    "Refused. This token belongs to sign-in session {}, but WorkBuddy is now on {}. \
+                     Signing in again replaces the old session and retires tokens from it, however long \
+                     their own expiry claims. Copy one out of a request the browser makes now.",
+                    short_id(&check.session_id),
+                    short_id(&check.app_session_id)
+                ),
+                _ => "Refused — WorkBuddy does not accept this token. Copy a fresh one from the browser."
+                    .to_string(),
+            };
+        }
+        Err(FetchErr::Unavailable(why)) => {
+            check.status = "unverified".to_string();
+            check.note = format!("Could not check this credential — {why}");
+        }
+    }
+    done(check, access, refresh)
+}
+
+/// Checks a candidate credential without storing anything.
+pub fn check_credential(token: &str, enterprise_id: &str, user_id: &str, domain: &str) -> CredentialCheck {
+    evaluate(token, enterprise_id, user_id, domain).check
+}
+
+/// Verifies first, then stores — and stores the pair the platform just issued rather than the string
+/// that was pasted, so a pasted refresh token leaves behind a credential that is already live.
+///
+/// A credential the server actively refused is not written at all. Everything else is, including one
+/// that could not be checked because the network was down: refusing to keep it would make an offline
+/// machine unable to receive a credential it has already been given.
+pub fn verify_and_save(
+    token: &str,
+    enterprise_id: &str,
+    user_id: &str,
+    domain: &str,
+) -> Result<CredentialCheck, String> {
+    let evaluated = evaluate(token, enterprise_id, user_id, domain);
+    if evaluated.check.rejected() {
+        return Err(evaluated.check.note.clone());
+    }
+    save_credential(&evaluated.access, &evaluated.refresh, enterprise_id, user_id, &evaluated.domain)?;
+    Ok(evaluated.check)
 }
 
 /// Whether the installed app left canonical state here at all, or — since the transcripts outlive a
@@ -473,8 +1063,9 @@ pub fn probe() -> String {
     // installed here, so the report has to lead with which credential is actually in use.
     if let Some(credential) = read_credential() {
         return format!(
-            "WorkBuddy: pasted credential in use (token {} chars, {}{})",
+            "WorkBuddy: pasted credential in use (access token {} chars, refresh token {}, {}{})",
             credential.access_token.trim().len(),
+            if credential.refresh_token.trim().is_empty() { "none" } else { "held" },
             if credential.enterprise_id.trim().is_empty() { "personal" } else { "enterprise" },
             if credential.user_id.trim().is_empty() { "" } else { ", user id set" }
         );
@@ -842,8 +1433,13 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
     // A credential the user pasted outranks the app's own file, and for the reason the file exists at
     // all: when the app sealed its copy, that file can never answer, and someone who pasted a token
     // did it precisely so this reader would use it.
-    let pasted = read_credential();
+    let mut pasted = read_credential();
     let from_paste = pasted.is_some();
+    // A credential holding a refresh token is renewed in place here, before it is used, so a paste
+    // that outlived the app's own sign-in session keeps reading instead of going stale. The failure
+    // is kept rather than discarded: when the balance then goes missing, "the refresh token was
+    // refused, and here is what the server said" is a far better sentence than "paste a fresh one".
+    let renewal_failed = pasted.as_mut().and_then(freshen);
     let (session, reason) = match pasted.as_ref() {
         Some(credential) => (Some(session_from_credential(credential)), None),
         None => read_session(now),
@@ -853,7 +1449,7 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
     // user somewhere that cannot change the outcome.
     let missing = |reason: Option<ReadReason>| -> String {
         if from_paste {
-            PASTED_REFUSED.into()
+            renewal_failed.clone().unwrap_or_else(|| PASTED_REFUSED.into())
         } else {
             quota_missing_note(reason)
         }
@@ -887,7 +1483,30 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
         return snap;
     }
 
-    match fetch_once(&session) {
+    // One retry, and only one. A credential can hold a refresh token that outlives the access token
+    // sitting beside it, and a token the server has just refused is exactly the moment to spend it —
+    // the case this whole path exists for. A second refusal is the server's answer, not something to
+    // hammer at.
+    let mut attempt = fetch_once(&session);
+    if matches!(attempt, Err(FetchErr::NeedsAuth)) {
+        if let Some(credential) = pasted.as_mut() {
+            if !credential.refresh_token.trim().is_empty() {
+                // Named for the same reason as in `freshen`: the arm below writes the credential this
+                // call reads from.
+                let domain = credential.domain_or_default();
+                if let Ok(fresh) = renew(&credential.refresh_token, &domain) {
+                    credential.access_token = fresh.access_token;
+                    if !fresh.refresh_token.is_empty() {
+                        credential.refresh_token = fresh.refresh_token;
+                    }
+                    let _ = write_credential(credential);
+                    attempt = fetch_once(&session_from_credential(credential));
+                }
+            }
+        }
+    }
+
+    match attempt {
         Ok(body) => {
             let reading = if session.enterprise_id.is_empty() {
                 parse_personal_usage(&body)
@@ -933,7 +1552,7 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
             }
             snap.status = "needsAuth".into();
             snap.note = if from_paste {
-                PASTED_REFUSED.into()
+                missing(None)
             } else {
                 "WorkBuddy rejected the session — sign in again in the app".into()
             };
@@ -1255,8 +1874,7 @@ mod tests {
         let credential = ManualCredential {
             access_token: "  Bearer tok-1 ".into(),
             user_id: "u-1".into(),
-            enterprise_id: String::new(),
-            account_type: String::new(),
+            ..Default::default()
         };
         let session = session_from_credential(&credential);
         assert_eq!(session.token, "tok-1");
@@ -1272,8 +1890,8 @@ mod tests {
         let credential = ManualCredential {
             access_token: "tok".into(),
             enterprise_id: " ent-9 ".into(),
-            user_id: String::new(),
             account_type: "enterprise".into(),
+            ..Default::default()
         };
         let session = session_from_credential(&credential);
         assert_eq!(session.enterprise_id, "ent-9");
@@ -1297,5 +1915,186 @@ mod tests {
     #[test]
     fn an_unmetered_plan_draws_no_window() {
         assert!(window_of(&Reading::Unmetered("unlimited".into())).is_none());
+    }
+
+    // ---------------- the two kinds of token ----------------
+
+    /// A real-shaped access token: three segments, the middle one a claims object. Nothing here is
+    /// verified — the fields are only read for the two timestamps and the session id.
+    const FIXTURE_JWT: &str = concat!(
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.",
+        "eyJpYXQiOjE3NTYwMDAwMDAsImV4cCI6MTc5NDQ3NzUyMywic2lkIjoiZDhiYzk0MGEtOTM4Ny00N2I1LWEwYWUtNTg1Yzc4ZTc5ZDQ2IiwiYXpwIjoid29ya2J1ZGR5Iiwic3ViIjoiZmQ1MWM1NjgtNWE1Yy00YWUxLWE1MGMtOTVlODk4ZTQ2YTJmIn0.",
+        "c2ln"
+    );
+
+    #[test]
+    fn the_two_kinds_of_token_are_told_apart_by_shape() {
+        assert_eq!(classify(FIXTURE_JWT), TokenKind::Access);
+        // The `Bearer ` prefix a browser's network panel leaves on is the same either way.
+        assert_eq!(classify(&format!("Bearer {FIXTURE_JWT}")), TokenKind::Access);
+        assert_eq!(classify("  "), TokenKind::Empty);
+        assert_eq!(classify(""), TokenKind::Empty);
+        // An opaque handle has no dots, so it cannot be mistaken for a JWT.
+        assert_eq!(classify("3f9c1d2e-0b44-4a71-9f0e-8c2b6d5a1e77"), TokenKind::Refresh);
+        // Two of the three segments is not a JWT: the shape is what decides, and a near-miss is
+        // still sent somewhere — better the renewal route than silently treated as empty.
+        assert_eq!(classify("aaa.bbb"), TokenKind::Refresh);
+    }
+
+    #[test]
+    fn the_claims_are_read_for_the_two_timestamps_and_the_session() {
+        let claims = jwt_claims(FIXTURE_JWT).expect("a claims object");
+        assert_eq!(claim_ms(&claims, "iat"), Some(1_756_000_000_000));
+        assert_eq!(claim_ms(&claims, "exp"), Some(1_794_477_523_000));
+        assert_eq!(
+            claims.get("sid").and_then(|v| v.as_str()),
+            Some("d8bc940a-9387-47b5-a0ae-585c78e79d46")
+        );
+    }
+
+    /// A claim that is missing, zero or not a number means "not stated" — never 1970, which would
+    /// make every credential look long expired and renew on every poll.
+    #[test]
+    fn an_unstated_claim_is_not_the_epoch() {
+        let claims = serde_json::json!({ "exp": 0, "iat": "soon", "nbf": -5 });
+        assert_eq!(claim_ms(&claims, "exp"), None);
+        assert_eq!(claim_ms(&claims, "iat"), None);
+        assert_eq!(claim_ms(&claims, "nbf"), None);
+        assert_eq!(claim_ms(&claims, "absent"), None);
+    }
+
+    /// A refresh token, spent at the renewal route. The path is pinned because the one the extension's
+    /// own source names is not routed at all: `/v2/auth/token/refresh` answers `404 Route Not Found`
+    /// on every core-API origin, while `/v2/plugin/auth/token/refresh` answers with the platform's own
+    /// refusal. Getting this one segment wrong turns a working credential into a mystery.
+    #[test]
+    fn the_renewal_route_is_the_one_that_actually_answers() {
+        assert_eq!(REFRESH_PATH, "/v2/plugin/auth/token/refresh");
+        assert!(REFRESH_PATH.starts_with("/v2/"), "every core-API route here is under /v2");
+        assert_ne!(REFRESH_PATH, "/v2/auth/token/refresh", "the unrouted path the source names");
+        assert!(USER_AGENT.starts_with("Mozilla/5.0"), "the gateway screens on this before the token");
+    }
+
+    /// The refusal the platform actually gave, verbatim from a live probe on 2026-10-05. Keeping the
+    /// server's own sentence is the point: it separates a malformed handle from a session that ended,
+    /// and those two call for different things from the person reading it.
+    #[test]
+    fn a_renewal_refusal_keeps_the_servers_own_words() {
+        let body = r#"{"code":12153,"msg":"12153:refresh token failed:10000:token format error","requestId":"3b7a5ff4"}"#;
+        let err = parse_renew_failure(401, body);
+        assert_eq!(
+            err,
+            RenewErr::Refused("12153:refresh token failed:10000:token format error".into())
+        );
+        assert!(err.refused(), "a refusal is a verdict on the credential");
+        assert!(err.note().contains("token format error"), "the server's words survive into the note");
+        // A gateway page with no JSON in it is still a refusal, just a less informative one.
+        let html = parse_renew_failure(401, "<html><head><title>401 Authorization Required</title>");
+        assert_eq!(html, RenewErr::Refused("HTTP 401".into()));
+    }
+
+    /// A refusal can also arrive under a 200, with the reason in `code`/`msg`. Reading the payload
+    /// first would turn that into "the reply carried no access token" and lose the reason.
+    #[test]
+    fn a_refusal_under_a_200_is_still_a_refusal() {
+        let body = serde_json::json!({ "code": 12153, "msg": "refresh token failed:10000" });
+        assert_eq!(parse_renew_body(&body), Err(RenewErr::Refused("refresh token failed:10000".into())));
+    }
+
+    #[test]
+    fn a_renewal_reply_is_read_from_either_envelope() {
+        let flat = serde_json::json!({
+            "code": 0,
+            "data": { "accessToken": "a-1", "refreshToken": "r-1", "expiresIn": 3600 }
+        });
+        let nested = serde_json::json!({
+            "code": 0,
+            "data": { "data": { "access_token": "a-2", "refresh_token": "r-2", "expiresAt": 1_800_000_000_000u64 } }
+        });
+        let before = now_ms();
+        let a = parse_renew_body(&flat).expect("the flat shape");
+        let after = now_ms();
+        assert_eq!(a.access_token, "a-1");
+        assert_eq!(a.refresh_token, "r-1");
+        // `expiresIn` is seconds counted from the moment of the reply, so the only honest assertion
+        // is that it landed an hour ahead of the call — not against a fixed number.
+        assert!(
+            a.expires_at >= before + 3_600_000 && a.expires_at <= after + 3_600_000,
+            "expiresIn is an hour counted from now, got {} between {} and {}",
+            a.expires_at,
+            before + 3_600_000,
+            after + 3_600_000
+        );
+
+        let b = parse_renew_body(&nested).expect("the nested shape");
+        assert_eq!(b.access_token, "a-2");
+        assert_eq!(b.refresh_token, "r-2");
+        assert_eq!(b.expires_at, 1_800_000_000_000, "a stated expiresAt is already milliseconds");
+    }
+
+    /// A reply with no token in it is a shape problem, not a refusal — the credential may be fine.
+    /// Reporting it as refused would throw away a credential over someone else's bug.
+    #[test]
+    fn a_tokenless_reply_is_not_a_refusal() {
+        let err = parse_renew_body(&serde_json::json!({ "code": 0, "data": {} })).unwrap_err();
+        assert!(!err.refused());
+        assert!(matches!(err, RenewErr::Shape(_)));
+        assert_eq!(parse_renew_body(&serde_json::json!({ "code": 0 })).unwrap_err(), RenewErr::Shape("the reply carried no data".into()));
+    }
+
+    // ---------------- what a save is allowed to store ----------------
+
+    #[test]
+    fn a_refused_or_empty_check_is_never_stored() {
+        let mut check = CredentialCheck::blank(TokenKind::Access, None);
+        check.status = "refused".into();
+        assert!(check.rejected());
+        check.status = "empty".into();
+        assert!(check.rejected());
+        // "Could not reach the server" must not block a save: an offline machine still has to be able
+        // to take a credential it has been handed.
+        check.status = "unverified".into();
+        assert!(!check.rejected());
+        check.status = "ok".into();
+        assert!(!check.rejected());
+        check.status = "renewed".into();
+        assert!(!check.rejected());
+    }
+
+    /// The refusal that costs an hour: the token still says it has days left, and the only thing wrong
+    /// with it is the session it belongs to. The sentence has to say so, or the reader goes looking at
+    /// the clock.
+    #[test]
+    fn a_replaced_session_is_named_as_the_reason() {
+        let mut check = CredentialCheck::blank(TokenKind::Access, Some("d8bc940a-9387".into()));
+        check.session_id = Some("4d7a08d8-1111".into());
+        check.session_matches = match (&check.session_id, &check.app_session_id) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+        assert_eq!(check.session_matches, Some(false));
+        assert_eq!(short_id(&check.session_id), "4d7a08d8…");
+        assert_eq!(short_id(&check.app_session_id), "d8bc940a…");
+        assert_eq!(short_id(&None), "?");
+    }
+
+    /// Without both ids there is no comparison to make, and "unknown" must not be reported as "they
+    /// differ" — that would libel a credential that is merely older than this field.
+    #[test]
+    fn a_missing_session_on_either_side_compares_as_unknown() {
+        let both_missing: (Option<String>, Option<String>) = (None, None);
+        let matches = match (&both_missing.0, &both_missing.1) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+        assert_eq!(matches, None);
+    }
+
+    #[test]
+    fn the_renewal_domain_defaults_to_the_one_the_app_records() {
+        assert_eq!(ManualCredential::default().domain_or_default(), DEFAULT_DOMAIN);
+        assert_eq!(DEFAULT_DOMAIN, "www.workbuddy.cn");
+        let named = ManualCredential { domain: " wb.example.cn ".into(), ..Default::default() };
+        assert_eq!(named.domain_or_default(), "wb.example.cn");
     }
 }
