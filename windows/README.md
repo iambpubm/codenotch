@@ -482,6 +482,20 @@ which, Codenotch reads a thin strip of the screen beside the pill twice a second
 and keeps only its average brightness, which is never stored or sent. With the switch off, the notch
 open, or Show set to Always show, nothing is read.
 
+Folded, the bar also answers "is anything running?" by itself, so finding out does not mean opening
+the notch. A 3 px rail runs along the bar's inner edge — a short segment sliding up and down it while
+an agent works, the whole rail filled and pulsing while one is waiting on your approval, and solid
+green for a run that has just finished, which fades on its own. The three differ in shape as well as
+in colour, because the rail is far too small for colour alone to be trusted, and the difference worth
+the most is waiting-versus-busy: those are exactly the two states you folded the notch to stop looking
+at. It reads only the providers actually shown in the pill, so the bar cannot light up for a cell that
+is not there. It is transparent whenever nothing is running, and then the bar is the resting pill it
+has always been. The rail takes the bar's inner edge rather than the space beside it because that
+strip is where the backdrop is read from, and the read is a real screen capture: anything drawn there
+comes back as though it were the wallpaper. No single colour could have served both bars in any case —
+4.4:1 against both black and white is the best any sRGB colour manages — so the rail reuses the
+activity arcs' own three, and the bar's flip carries them.
+
 ### Icons
 
 Provider marks are the SVGs from [`@lobehub/icons-static-svg`](https://github.com/lobehub/lobe-icons)

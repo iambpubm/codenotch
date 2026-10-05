@@ -266,7 +266,9 @@
      time chasing its own colour. At opacity 0 while nothing is running, which leaves an idle notch
      exactly what it has always been. */
   #rail{position:absolute;background:var(--rail-c,transparent);pointer-events:none;opacity:0;
-    transition:opacity .18s ease;--rail-len:22px;
+    /* The colour has to be in here as well as the opacity: leaving a state unsets `--rail-c`, so a
+       transition on opacity alone would have nothing left to fade and the rail would blink out. */
+    transition:opacity .18s ease,background-color .18s ease;--rail-len:22px;
     left:0;top:0;width:3px;height:var(--rail-len);border-radius:5px 0 0 5px}
   body[data-edge="left"] #rail{left:auto;right:0;border-radius:0 5px 5px 0}
   body[data-edge="top"] #rail{left:0;top:auto;bottom:0;width:var(--rail-len);height:3px;border-radius:0 0 5px 5px}
