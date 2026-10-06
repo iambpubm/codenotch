@@ -10,6 +10,7 @@ mod tray;
 mod traymenu;
 mod usage;
 mod workbuddy;
+mod workbuddy_memory;
 mod workbuddy_tokens;
 mod codex;
 mod cursor;
@@ -1543,6 +1544,31 @@ fn clear_workbuddy_credential() -> Result<WorkbuddyCredentialState, String> {
     Ok(workbuddy_credential_state())
 }
 
+/// Take the credential the running WorkBuddy app is using, read out of its own memory, and store it.
+///
+/// This is the answer to the one failure the file system cannot fix. WorkBuddy seals the token it
+/// keeps on disk, so when the app signs in again and replaces its session, there is nothing left to
+/// re-read anywhere — and the settings row is left asking for a string that the person has no way of
+/// obtaining. The token is only sealed where it is stored, not where it is used: the app has to put
+/// it in an `Authorization` header, so it is in its address space in the clear.
+///
+/// `true` when a credential was found and written. `false` is a real answer, not an error: the app
+/// may not be running, or may not be signed in. The page decides what to say about either.
+///
+/// Blocking — it walks a few hundred megabytes — so it runs off the UI thread.
+#[tauri::command]
+async fn import_workbuddy_credential() -> Result<bool, String> {
+    let imported = tauri::async_runtime::spawn_blocking(|| workbuddy::import_live_credential(true))
+        .await
+        .map_err(|e| format!("the import did not finish: {e}"))?;
+    if imported.is_none() {
+        return Ok(false);
+    }
+    // Same as saving by hand: the balance should appear now, not at the next poll.
+    workbuddy::request_refresh();
+    Ok(true)
+}
+
 /// What the settings page is told about the DeepSeek key. `source` is how the balance is being read
 /// right now — the harness's own file, the environment, a pasted key, or nothing at all — because
 /// "there is no key here" and "the key is coming from somewhere you did not put it" are different
@@ -2080,6 +2106,7 @@ fn main() {
             check_workbuddy_credential,
             set_workbuddy_credential,
             clear_workbuddy_credential,
+            import_workbuddy_credential,
             get_deepseek_credential,
             set_deepseek_credential,
             clear_deepseek_credential,

@@ -481,22 +481,131 @@ fn session_from_credential(credential: &ManualCredential) -> Session {
 /// a token whose session was replaced when the app signed in again. The second one is the one that
 /// costs somebody an hour, because the token's own `exp` still reads days away and nothing in the
 /// reply says "session".
-pub fn desktop_session_state() -> Option<String> {
+/// What the app's own auth file says about the session it is on.
+///
+/// None of these fields is sealed. 5.6.0 seals `auth.accessToken` and `auth.refreshToken` and leaves
+/// the rest readable, which is what makes the rest worth reading: the session id is an anchor a
+/// credential can be checked against, and the account id is what a balance request is addressed to.
+#[derive(Debug, Clone, Default)]
+pub struct DesktopAuth {
+    /// The id of the sign-in session the app is currently using.
+    pub session_state: String,
+    /// The domain the app addresses its own requests to.
+    pub domain: String,
+    /// The account id, sent as `X-User-Id` when asking for a balance.
+    pub user_id: String,
+}
+
+/// The first auth file that names a session decides.
+pub fn desktop_auth() -> Option<DesktopAuth> {
+    fn text_at(value: &serde_json::Value, path: &[&str]) -> String {
+        let mut cursor = value;
+        for step in path {
+            cursor = match cursor.get(step) {
+                Some(next) => next,
+                None => return String::new(),
+            };
+        }
+        cursor.as_str().unwrap_or("").trim().to_string()
+    }
     for dir in auth_dirs() {
         let Some(text) = read_regular_file(&auth_file_in(&dir)) else { continue };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
-        let state = value
-            .get("auth")
-            .and_then(|a| a.get("sessionState"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if !state.is_empty() {
-            return Some(state);
+        let auth = DesktopAuth {
+            session_state: text_at(&value, &["auth", "sessionState"]),
+            domain: text_at(&value, &["auth", "domain"]),
+            user_id: text_at(&value, &["account", "uid"]),
+        };
+        if !auth.session_state.is_empty() {
+            return Some(auth);
         }
     }
     None
+}
+
+/// The desktop app's own `auth.sessionState` — the id of the sign-in session it is currently using.
+///
+/// This one field is not sealed even in 5.6.0, where the token beside it is, and it is the only way
+/// to separate the two failures that look identical from the outside: a token that has aged out, and
+/// a token whose session was replaced when the app signed in again. The second one is the one that
+/// costs somebody an hour, because the token's own `exp` still reads days away and nothing in the
+/// reply says "session".
+pub fn desktop_session_state() -> Option<String> {
+    desktop_auth().map(|auth| auth.session_state)
+}
+
+/// The sign-in session a token belongs to, or `None` when it is not a token this can read.
+fn token_session(token: &str) -> Option<String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    jwt_claims(token)
+        .and_then(|claims| claims.get("sid").and_then(|sid| sid.as_str()).map(str::to_string))
+        .or_else(|| crate::workbuddy_memory::session_id(token))
+        .map(|sid| sid.trim().to_string())
+        .filter(|sid| !sid.is_empty())
+}
+
+/// Whether a stored credential still belongs to the session the app is on.
+///
+/// Either half counts. The two tokens do not fail together: a refresh token outlives the app's next
+/// sign-in because it is spent at the renewal route to mint a new pair, while the access token
+/// beside it was killed the moment that session was replaced. Asking only about the access token
+/// would throw away a credential that is still doing its job.
+///
+/// With no app auth file to compare against — WorkBuddy not installed, or never signed in — nothing
+/// is known, and "unknown" must not read as "stale": that would discard a credential somebody just
+/// pasted on a machine where the app has not run yet.
+fn credential_is_current(credential: &ManualCredential) -> bool {
+    let Some(app_session) = desktop_session_state() else { return true };
+    let app_session = app_session.trim().to_string();
+    [&credential.access_token, &credential.refresh_token]
+        .iter()
+        .filter_map(|token| token_session(token.as_str()))
+        .any(|session| session == app_session)
+}
+
+/// Look in the running app's memory for the credential it is using, and write it down.
+///
+/// This is the one path that can fill in a credential without asking. It exists because the app
+/// seals its own copy on disk, so when a session is replaced there is nothing on the file system to
+/// re-read — the user is otherwise left to go and find a token by hand.
+///
+/// Returns the credential only if it was written.
+pub fn import_live_credential(force: bool) -> Option<ManualCredential> {
+    let app = desktop_auth()?;
+    // The automatic path is rate limited — the scan is not free, and a session that cannot be found
+    // once will not be found a moment later. A button press is not: somebody is waiting on the
+    // result of *this* attempt, and "not yet" is not an answer they can do anything with.
+    let (access, refresh, _session) = if force {
+        crate::workbuddy_memory::read_session_credentials(&app.session_state)
+            .map(|(access, refresh)| (access, refresh, app.session_state.clone()))
+    } else {
+        crate::workbuddy_memory::import(Some(&app.session_state))
+    }?;
+    let mut credential = read_credential().unwrap_or_default();
+    credential.access_token = access;
+    if !refresh.is_empty() {
+        credential.refresh_token = refresh;
+    }
+    // Fields a token cannot carry. The app's own file is the authority for these, and a pasted
+    // credential has always relied on the defaults when they are absent — but an import has no
+    // reason to leave them blank when the answer is sitting in the file next to the session id.
+    if credential.enterprise_id.trim().is_empty() {
+        credential.enterprise_id = String::new();
+    }
+    if credential.user_id.trim().is_empty() && !app.user_id.is_empty() {
+        credential.user_id = app.user_id.clone();
+    }
+    if credential.account_type.trim().is_empty() {
+        credential.account_type = "personal".to_string();
+    }
+    if credential.domain.trim().is_empty() && !app.domain.is_empty() {
+        credential.domain = app.domain.clone();
+    }
+    write_credential(&credential).ok()?;
+    read_credential()
 }
 
 // ---------------- renewing a credential ----------------
@@ -1434,6 +1543,19 @@ fn read_once(prev: &UsageSnapshot, tokens: &mut TotalsCache) -> UsageSnapshot {
     // all: when the app sealed its copy, that file can never answer, and someone who pasted a token
     // did it precisely so this reader would use it.
     let mut pasted = read_credential();
+    // Missing, or belonging to a session the app has since replaced: those are the two cases the
+    // file system cannot answer, because the app's own copy is sealed. Before either is reported as
+    // a dead end, look for the live credential in the app's own memory. The attempt is rate limited
+    // inside, so a machine where this never succeeds is not scanned on every poll.
+    let stale = match pasted.as_ref() {
+        Some(credential) => !credential_is_current(credential),
+        None => true,
+    };
+    if stale {
+        if let Some(imported) = import_live_credential(false) {
+            pasted = Some(imported);
+        }
+    }
     let from_paste = pasted.is_some();
     // A credential holding a refresh token is renewed in place here, before it is used, so a paste
     // that outlived the app's own sign-in session keeps reading instead of going stale. The failure

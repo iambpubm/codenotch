@@ -104,13 +104,6 @@
   .mini.ghost{background:transparent}
   /* Not .acct-detail: that one carries its own 26 px indent, which would stack on top of the block's. */
   .acct-note{font-size:12px;color:var(--text2)}
-  /* The "where do I get this" steps. Collapsed by default: they are read once and then they are
-     clutter, and printed inline they would push the row's own state line down the pane. */
-  .wb-help{margin-top:6px;font-size:12px;color:var(--text2)}
-  .wb-help>summary{cursor:pointer;color:var(--accent);width:fit-content}
-  .wb-help>summary:hover{text-decoration:underline}
-  .wb-help>ol{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
-  .wb-help>ol>li{padding-left:2px}
   /* The verdict a credential check came back with. Red only when the server refused it, so a pass
      does not shout and a failure is not something to go looking for. */
   .acct-note.bad{color:var(--danger)}
@@ -288,15 +281,17 @@ const PT_BR_STATIC = {
   'Access and refresh token saved':'access token e refresh token guardados',
   'Refresh token saved — a fresh access token is fetched with it':'refresh token guardado — um novo access token é obtido automaticamente',
   'Token expiry':'Validade da credencial',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'Esta credencial pertence a uma sessão de início de sessão que o WorkBuddy já substituiu, por isso já não funciona — cole uma nova',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'Este token pertence a uma sessão de login que o WorkBuddy já substituiu, então não funciona mais — leia o atual do aplicativo',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'Verificar envia a credencial ao WorkBuddy e mostra a resposta, sem guardar nada',
-  'Where do I get this?':'Onde consigo isto?',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'Abra www.workbuddy.cn no navegador e entre na conta\nPressione F12, abra a aba Network e recarregue a página\nClique nas requisições uma a uma até os Request Headers mostrarem o cabeçalho authorization\nCopie o que vem depois de "Bearer " no cabeçalho authorization — uma sequência longa começando com eyJ',
+  'Read from WorkBuddy':'Ler do WorkBuddy',
+  'Reading…':'Lendo…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'Lê a credencial que o aplicativo WorkBuddy em execução está usando e a salva — nada para colar',
+  'Nothing to read — WorkBuddy has to be running and signed in':'Nada para ler — o WorkBuddy precisa estar em execução e conectado',
   'Enterprise id (optional)':'ID da empresa (opcional)',
   'Save':'Guardar',
   'Remove':'Remover',
   'Credential saved — the balance is read with it':'Credencial guardada — o saldo é lido com ela',
-  'Paste a credential to read the Credits balance':'Cole uma credencial para ler o saldo de créditos',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'Cole uma credencial, ou leia a que o WorkBuddy está usando, para ver o saldo de Créditos',
   'CyberBrain':'CyberBrain',
   'Workbench id':'Id do workbench',
   'Paste the workbench id':'Cole o id do workbench',
@@ -426,15 +421,17 @@ const RU_STATIC = {
   'Access and refresh token saved':'access token и refresh token сохранены',
   'Refresh token saved — a fresh access token is fetched with it':'refresh token сохранён — новый access token запрашивается автоматически',
   'Token expiry':'Срок действия учётных данных',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'Эта учётная запись относится к сеансу входа, который WorkBuddy уже заменил, поэтому она больше не работает — вставьте новую',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'Этот токен относится к сеансу входа, который WorkBuddy уже заменил, поэтому он больше не работает — прочитайте текущий из приложения',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'Проверка отправляет токен в WorkBuddy и показывает ответ, ничего не сохраняя',
-  'Where do I get this?':'Где это взять?',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'Откройте www.workbuddy.cn в браузере и войдите\nНажмите F12, перейдите на вкладку Network и перезагрузите страницу\nОткрывайте запросы по одному, пока в Request Headers не появится заголовок authorization\nСкопируйте то, что идёт после "Bearer " в заголовке authorization — длинную строку, начинающуюся с eyJ',
+  'Read from WorkBuddy':'Читать из WorkBuddy',
+  'Reading…':'Чтение…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'Читает учётные данные, которые использует запущенный WorkBuddy, и сохраняет их — вставлять ничего не нужно',
+  'Nothing to read — WorkBuddy has to be running and signed in':'Читать нечего — WorkBuddy должен быть запущен и выполнен вход',
   'Enterprise id (optional)':'ID организации (необязательно)',
   'Save':'Сохранить',
   'Remove':'Удалить',
   'Credential saved — the balance is read with it':'Учётные данные сохранены — баланс читается с их помощью',
-  'Paste a credential to read the Credits balance':'Вставьте учётные данные, чтобы видеть баланс кредитов',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'Вставьте учётные данные или прочитайте те, что использует WorkBuddy, чтобы увидеть баланс Credits',
   'CyberBrain':'CyberBrain',
   'Workbench id':'Идентификатор воркбенча',
   'Paste the workbench id':'Вставьте идентификатор воркбенча',
@@ -531,15 +528,17 @@ const ZH_STATIC = {
   'Access and refresh token saved':'已保存 access token 与 refresh token',
   'Refresh token saved — a fresh access token is fetched with it':'已保存 refresh token —— 会自动换取新的 access token',
   'Token expiry':'凭据有效期',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'这张凭据属于一个已被 WorkBuddy 更换的登录会话，因此不再有效 —— 请粘贴一张新的',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'这张凭据属于一个已被 WorkBuddy 更换的登录会话，因此不再有效 —— 请从应用中读取当前那张',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'检查会把这张凭据发给 WorkBuddy 并回报结果，不会保存',
-  'Where do I get this?':'去哪取这个值？',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'用浏览器打开 www.workbuddy.cn 并登录\n按 F12 打开开发者工具，切到 Network（网络）面板，然后刷新页面\n在请求列表里逐条点开，直到右侧的 Request Headers（请求标头）里出现 authorization 这一行\n复制 authorization 里 Bearer 后面那串 —— 以 eyJ 开头的长字符串',
+  'Read from WorkBuddy':'从 WorkBuddy 读取',
+  'Reading…':'读取中…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'读取正在运行的 WorkBuddy 正在使用的凭据并保存 —— 无需粘贴',
+  'Nothing to read — WorkBuddy has to be running and signed in':'没有可读取的凭据 —— WorkBuddy 需要在运行且已登录',
   'Enterprise id (optional)':'企业 ID（可选）',
   'Save':'保存',
   'Remove':'移除',
   'Credential saved — the balance is read with it':'凭据已保存——余额将用它读取',
-  'Paste a credential to read the Credits balance':'粘贴凭据后即可读取额度余额',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'粘贴凭据，或读取 WorkBuddy 正在使用的那一张，即可看到 Credits 余额',
   'CyberBrain':'赛博大脑',
   'Workbench id':'工作台 ID',
   'Paste the workbench id':'粘贴工作台 ID',
@@ -667,15 +666,17 @@ const ZH_HANT_STATIC = {
   'Access and refresh token saved':'已儲存 access token 與 refresh token',
   'Refresh token saved — a fresh access token is fetched with it':'已儲存 refresh token —— 會自動換取新的 access token',
   'Token expiry':'憑證有效期限',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'這張憑證屬於一個已被 WorkBuddy 更換的登入工作階段，因此已失效 —— 請貼上一張新的',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'這張憑證屬於一個已被 WorkBuddy 更換的登入工作階段，因此不再有效 —— 請從應用程式讀取目前那一張',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'檢查會把這張憑證送給 WorkBuddy 並回報結果，不會儲存',
-  'Where do I get this?':'去哪取這個值？',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'用瀏覽器打開 www.workbuddy.cn 並登入\n按 F12 開啟開發者工具，切到 Network（網路）面板，然後重新載入頁面\n在請求列表裡逐筆點開，直到右側的 Request Headers（請求標頭）裡出現 authorization 這一行\n複製 authorization 裡 Bearer 後面那串 —— 以 eyJ 開頭的長字串',
+  'Read from WorkBuddy':'從 WorkBuddy 讀取',
+  'Reading…':'讀取中…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'讀取正在執行的 WorkBuddy 所使用的憑證並儲存 —— 無需貼上',
+  'Nothing to read — WorkBuddy has to be running and signed in':'沒有可讀取的憑證 —— WorkBuddy 必須在執行中且已登入',
   'Enterprise id (optional)':'企業 ID（選填）',
   'Save':'儲存',
   'Remove':'移除',
   'Credential saved — the balance is read with it':'憑證已儲存——餘額將用它讀取',
-  'Paste a credential to read the Credits balance':'貼上憑證後即可讀取額度餘額',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'貼上憑證，或讀取 WorkBuddy 正在使用的那一張，即可看到 Credits 餘額',
   'CyberBrain':'賽博大腦',
   'Workbench id':'工作台 ID',
   'Paste the workbench id':'貼上工作台 ID',
@@ -803,15 +804,17 @@ const JA_STATIC = {
   'Access and refresh token saved':'access token と refresh token を保存しました',
   'Refresh token saved — a fresh access token is fetched with it':'refresh token を保存しました — 新しい access token を自動で取得します',
   'Token expiry':'認証情報の有効期限',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'この認証情報は WorkBuddy が入れ替えたサインインセッションのもので、もう使えません — 新しいものを貼り付けてください',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'このトークンは WorkBuddy が置き換えたサインインセッションのもので、もう使えません — アプリから現在のものを読み取ってください',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'確認は WorkBuddy に問い合わせて結果を表示します。保存はしません',
-  'Where do I get this?':'この値はどこで取得しますか？',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'ブラウザで www.workbuddy.cn を開いてサインインします\nF12 を押して Network タブを開き、ページを再読み込みします\nリクエスト一覧を順にクリックし、Request Headers に authorization が現れるまで確認します\nauthorization ヘッダーの「Bearer 」の後ろ（eyJ で始まる長い文字列）をコピーします',
+  'Read from WorkBuddy':'WorkBuddy から読み取る',
+  'Reading…':'読み取り中…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'実行中の WorkBuddy が使用している資格情報を読み取って保存します — 貼り付けは不要',
+  'Nothing to read — WorkBuddy has to be running and signed in':'読み取れるものがありません — WorkBuddy が起動していてサインインしている必要があります',
   'Enterprise id (optional)':'エンタープライズ ID（任意）',
   'Save':'保存',
   'Remove':'削除',
   'Credential saved — the balance is read with it':'認証情報を保存しました — 残高はこれで読み取ります',
-  'Paste a credential to read the Credits balance':'認証情報を貼り付けるとクレジット残高を読み取れます',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'資格情報を貼り付けるか、WorkBuddy が使用中のものを読み取ると、Credits 残高が表示されます',
   'CyberBrain':'CyberBrain',
   'Workbench id':'ワークベンチ ID',
   'Paste the workbench id':'ワークベンチ ID を貼り付け',
@@ -926,15 +929,17 @@ const KO_STATIC = {
   'Access and refresh token saved':'access token과 refresh token을 저장했습니다',
   'Refresh token saved — a fresh access token is fetched with it':'refresh token을 저장했습니다 — 새 access token을 자동으로 받아옵니다',
   'Token expiry':'자격 증명 만료',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'이 자격 증명은 WorkBuddy가 교체한 로그인 세션의 것이라 더 이상 동작하지 않습니다 — 새로 붙여넣어 주세요',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'이 토큰은 WorkBuddy가 이미 교체한 로그인 세션의 것이므로 더 이상 작동하지 않습니다 — 앱에서 현재 것을 읽어 오세요',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'확인은 WorkBuddy에 토큰을 보내 결과를 알려줍니다. 저장하지 않습니다',
-  'Where do I get this?':'이 값은 어디서 가져오나요?',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'브라우저에서 www.workbuddy.cn을 열고 로그인합니다\nF12를 눌러 Network 탭을 열고 페이지를 새로 고칩니다\n요청 목록을 하나씩 클릭해 Request Headers에 authorization이 나올 때까지 확인합니다\nauthorization 헤더의 "Bearer " 뒤에 오는 값(eyJ로 시작하는 긴 문자열)을 복사합니다',
+  'Read from WorkBuddy':'WorkBuddy에서 읽기',
+  'Reading…':'읽는 중…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'실행 중인 WorkBuddy가 사용하는 자격 증명을 읽어 저장합니다 — 붙여넣을 필요 없음',
+  'Nothing to read — WorkBuddy has to be running and signed in':'읽을 것이 없습니다 — WorkBuddy가 실행 중이고 로그인되어 있어야 합니다',
   'Enterprise id (optional)':'엔터프라이즈 ID (선택)',
   'Save':'저장',
   'Remove':'제거',
   'Credential saved — the balance is read with it':'자격 증명이 저장되었습니다 — 이 값으로 잔액을 읽습니다',
-  'Paste a credential to read the Credits balance':'자격 증명을 붙여넣으면 크레딧 잔액을 읽을 수 있습니다',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'자격 증명을 붙여넣거나 WorkBuddy가 사용 중인 것을 읽으면 Credits 잔액이 표시됩니다',
   'CyberBrain':'CyberBrain',
   'Workbench id':'워크벤치 ID',
   'Paste the workbench id':'워크벤치 ID 붙여넣기',
@@ -1064,15 +1069,17 @@ const UK_STATIC = {
   'Access and refresh token saved':'access token і refresh token збережено',
   'Refresh token saved — a fresh access token is fetched with it':'refresh token збережено — новий access token запитується автоматично',
   'Token expiry':'Термін дії облікових даних',
-  'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one':'Ці облікові дані належать сеансу входу, який WorkBuddy вже замінив, тому вони більше не працюють — вставте нові',
+  'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app':'Цей токен належить сеансу входу, який WorkBuddy вже замінив, тому він більше не працює — прочитайте поточний із застосунку',
   'Check sends this token to WorkBuddy and reports what came back, without saving it':'Перевірка надсилає токен у WorkBuddy і показує відповідь, нічого не зберігаючи',
-  'Where do I get this?':'Де це взяти?',
-  'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ':'Відкрийте www.workbuddy.cn у браузері та увійдіть\nНатисніть F12, перейдіть на вкладку Network і перезавантажте сторінку\nВідкривайте запити по одному, доки в Request Headers не з’явиться заголовок authorization\nСкопіюйте те, що йде після "Bearer " у заголовку authorization — довгий рядок, що починається з eyJ',
+  'Read from WorkBuddy':'Читати з WorkBuddy',
+  'Reading…':'Читання…',
+  'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste':'Читає облікові дані, які використовує запущений WorkBuddy, і зберігає їх — вставляти нічого не потрібно',
+  'Nothing to read — WorkBuddy has to be running and signed in':'Немає що читати — WorkBuddy має бути запущений і виконано вхід',
   'Enterprise id (optional)':'ID організації (необовʼязково)',
   'Save':'Зберегти',
   'Remove':'Видалити',
   'Credential saved — the balance is read with it':'Облікові дані збережено — баланс читається з них',
-  'Paste a credential to read the Credits balance':'Вставте облікові дані, щоб бачити баланс кредитів',
+  'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance':'Вставте облікові дані або прочитайте ті, що використовує WorkBuddy, щоб побачити баланс Credits',
   'CyberBrain':'CyberBrain',
   'Workbench id':'Ідентифікатор воркбенча',
   'Paste the workbench id':'Вставте ідентифікатор воркбенча',
@@ -1467,27 +1474,20 @@ const WB_SAVED_ACCESS = 'Credential saved — the balance is read with it';
 const WB_SAVED_REFRESH = 'Refresh token saved — a fresh access token is fetched with it';
 const WB_SAVED_BOTH = 'Access and refresh token saved';
 const WB_EXPIRY = 'Token expiry';
-const WB_STALE_SESSION = 'This token is from a sign-in session WorkBuddy has since replaced, so it no longer works — paste a fresh one';
+const WB_STALE_SESSION = 'This token belongs to a sign-in session WorkBuddy has since replaced, so it no longer works — read the current one from the app';
 const WB_CHECK = 'Check';
 const WB_CHECKING = 'Checking…';
 const WB_CHECK_HINT = 'Check sends this token to WorkBuddy and reports what came back, without saving it';
 const WB_PLACEHOLDER = 'Paste the accessToken value, or a refresh token';
-/* "Where do I get this?" is the question the row invites and used to leave unanswered — the fields
-   said what to paste and never where it comes from, so the first attempt ended in a blank stare.
-   The steps live behind a summary rather than on the row: they are needed once, and printed inline
-   they would push the balance out of sight for every later visit. One string, newline separated, so
-   a translator reads the whole sequence instead of four fragments. */
-const WB_WHERE_TITLE = 'Where do I get this?';
-const WB_WHERE = 'Open www.workbuddy.cn in your browser and sign in\nPress F12, switch to the Network tab, then reload the page\nClick requests one by one until the Request Headers show an authorization header\nCopy what follows "Bearer " in the authorization header — a long string starting with eyJ';
-
-/* The steps as an ordered list, rebuilt from the one translated string. Rendering them as <li> keeps
-   the numbering out of the translations, where it would have to be retyped seven times and would
-   drift the first time someone reordered a step. */
-function wbWhereHelp(){
-  const steps = ui(WB_WHERE, WB_WHERE).split('\n').filter(s => s.trim());
-  return '<details class="wb-help"><summary>' + esc(ui(WB_WHERE_TITLE, WB_WHERE_TITLE)) + '</summary>'
-    + '<ol>' + steps.map(s => '<li>' + esc(s) + '</li>').join('') + '</ol></details>';
-}
+/* This row used to answer "where do I get this?" with four steps for digging a token out of a
+   browser's network panel. Those steps were simply wrong: the web app signs in with cookies and
+   sends no authorization header at all, so the hunt could only ever come up empty. A token is not
+   something to go looking for — it is sitting in the running app's memory, and the app can be asked
+   for it. */
+const WB_IMPORT = 'Read from WorkBuddy';
+const WB_IMPORTING = 'Reading…';
+const WB_IMPORT_HINT = 'Reads the credential the running WorkBuddy app is using, and saves it — nothing to paste';
+const WB_IMPORT_FAILED = 'Nothing to read — WorkBuddy has to be running and signed in';
 
 function workbuddyCredentialRow(p){
   const st = wbCred || {};
@@ -1495,7 +1495,7 @@ function workbuddyCredentialRow(p){
   const kind = st.kind === 'both' ? WB_SAVED_BOTH
     : st.kind === 'refresh' ? WB_SAVED_REFRESH
     : WB_SAVED_ACCESS;
-  const emptyNote = 'Paste a credential to read the Credits balance';
+  const emptyNote = 'Paste a credential, or read the one WorkBuddy is using, to see the Credits balance';
   let note = saved ? ui(kind, kind) : ui(emptyNote, emptyNote);
   if(saved && st.expires_at) note += ' · ' + ui(WB_EXPIRY, WB_EXPIRY) + ' ' + st.expires_at;
   // A stored token from a replaced session reads as valid and is not. Saying so on the row is the
@@ -1512,14 +1512,15 @@ function workbuddyCredentialRow(p){
     + '<input class="cred" data-wb="enterprise" type="text" autocomplete="off" spellcheck="false" placeholder="'
     + esc(ui('Enterprise id (optional)', 'Enterprise id (optional)')) + '">'
     + '<div class="acct-actions">'
+    + '<button class="mini" data-wb-import>' + esc(ui(WB_IMPORT, WB_IMPORT)) + '</button>'
     + '<button class="mini" data-wb-check>' + esc(ui(WB_CHECK, WB_CHECK)) + '</button>'
     + '<button class="mini" data-wb-save>' + esc(ui('Save', 'Save')) + '</button>'
     + (saved ? '<button class="mini ghost" data-wb-clear>' + esc(ui('Remove', 'Remove')) + '</button>' : '')
     + '</div>'
     + '<div class="acct-note">' + esc(note) + '</div>'
     + verdict
+    + '<div class="acct-note">' + esc(ui(WB_IMPORT_HINT, WB_IMPORT_HINT)) + '</div>'
     + '<div class="acct-note">' + esc(ui(WB_CHECK_HINT, WB_CHECK_HINT)) + '</div>'
-    + wbWhereHelp()
     + '</div>';
 }
 /* 三句话，各自都要说实话：
@@ -1714,6 +1715,19 @@ function clearWorkbuddyCredential(){
     .then(() => { refreshOptions(); toast(); })
     .catch(e => strip('clear_workbuddy_credential failed: ' + errText(e)));
 }
+/* The one path that asks the person for nothing: the app is holding the token, and this asks it for
+   a copy. Rust saves it, so a success needs only a re-read of what is now stored. A failure is a
+   plain answer — the app is not running, or not signed in — rather than an error to dress up, which
+   is why it lands in the same verdict line a check uses. */
+function importWorkbuddyCredential(){
+  wbVerdict({ ok:false, busy:true, note: ui(WB_IMPORTING, WB_IMPORTING) });
+  invoke('import_workbuddy_credential')
+    .then(found => {
+      if(found){ wbCheck = null; refreshOptions(); toast(); return; }
+      wbVerdict({ ok:false, note: ui(WB_IMPORT_FAILED, WB_IMPORT_FAILED) });
+    })
+    .catch(e => wbVerdict({ ok:false, note: errText(e) }));
+}
 /* The DeepSeek key, which is usually not a task at all: the harness keeps it in the clear and this
    reads it, so the row leads with where the key is coming from and offers the field for the machine
    that has no harness. The top-up figure is the one thing nothing else can supply — the endpoint
@@ -1770,6 +1784,7 @@ function clearDeepseekCredential(){
 accountsPane.addEventListener('click', e => {
   const np = e.target.closest('[data-np]');
   if(np){ toggleNotch(np.dataset.np); return; }
+  if(e.target.closest('[data-wb-import]')){ importWorkbuddyCredential(); return; }
   if(e.target.closest('[data-wb-check]')){ checkWorkbuddyCredential(); return; }
   if(e.target.closest('[data-wb-save]')){ saveWorkbuddyCredential(); return; }
   if(e.target.closest('[data-wb-clear]')){ clearWorkbuddyCredential(); return; }

@@ -60,7 +60,12 @@ test('Every settings language can label the credential row', () => {
   for (const name of names) {
     const table = block(settings, `const ${name}_STATIC = {\n`, '\n};\n');
     for (const key of ["'WorkBuddy credential'", "'Paste the accessToken value'", "'Enterprise id (optional)'",
-      "'Save'", "'Remove'", "'Credential saved", "'Paste a credential to read the Credits balance'"]) {
+      "'Save'", "'Remove'", "'Credential saved",
+      // The row now offers to take the credential out of the running app instead of asking a person
+      // to go and find one. A table missing these prints English in the middle of a translated pane.
+      "'Paste a credential, or read the one WorkBuddy is using",
+      "'Read from WorkBuddy'", "'Reading", "'Reads the credential the running WorkBuddy app is using",
+      "'Nothing to read"]) {
       assert.ok(table.includes(key), `the ${name} table has no ${key}`);
     }
   }
