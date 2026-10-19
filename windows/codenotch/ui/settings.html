@@ -214,6 +214,10 @@
 
       <section class="pane" id="pane-general" role="tabpanel" aria-labelledby="tab-general" hidden>
         <div class="group">
+          <div class="item"><span>Touch screen</span><button class="switch" id="sw-touch" role="switch" aria-checked="false" aria-label="Touch screen"></button></div>
+          <div class="item cap" id="cap-touch" data-dynamic></div>
+        </div>
+        <div class="group">
           <div class="item"><span>Open Codenotch at login</span><button class="switch" id="sw-autostart" role="switch" aria-checked="false" aria-label="Open Codenotch at login"></button></div>
           <div class="item cap">Codenotch opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open Codenotch yourself.</div>
           <div class="item"><span>Version</span><span class="value" id="about-version" data-dynamic>0.3.0</span></div>
@@ -264,6 +268,12 @@ function esc(s){
    Windows page keep the Russian #141 gave them. `applyStaticUi()` matches a text node exactly, so
    rewording any string here means changing its key in every table. */
 const PT_BR_STATIC = {
+  'Touch screen':'Tela de toque',
+  'No touch screen was found on this PC.':'Nenhuma tela de toque foi encontrada neste PC.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'Desliga a tela de toque no nível do dispositivo — o mesmo interruptor «Desativar dispositivo» do Gerenciador de Dispositivos — para que a palma apoiada no vidro não mova o ponteiro. O Windows pede aprovação de administrador a cada troca.',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'A tela de toque é informada {n} vezes neste PC, então todas são desativadas.',
+  'The touch screen could not be changed.':'Não foi possível alterar a tela de toque.',
+  'Windows did not approve the change.':'O Windows não aprovou a alteração.',
   'DeepSeek API key':'Chave de API da DeepSeek',
   'Paste the API key':'Cole a chave de API',
   'Paid in so far (optional)':'Total pago até agora (opcional)',
@@ -404,6 +414,12 @@ const PT_BR_STATIC = {
   'Saved':'Salvo'
 };
 const RU_STATIC = {
+  'Touch screen':'Сенсорный экран',
+  'No touch screen was found on this PC.':'На этом компьютере сенсорный экран не найден.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'Выключает сенсорный экран на уровне устройства — тот же переключатель «Отключить устройство» в Диспетчере устройств, чтобы ладонь на стекле не сдвигала указатель. При каждом переключении Windows запрашивает права администратора.',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'На этом компьютере сенсорный экран заявлен {n} раз, поэтому отключаются все.',
+  'The touch screen could not be changed.':'Не удалось переключить сенсорный экран.',
+  'Windows did not approve the change.':'Windows не одобрила изменение.',
   'DeepSeek API key':'Ключ API DeepSeek',
   'Paste the API key':'Вставьте ключ API',
   'Paid in so far (optional)':'Всего пополнено (необязательно)',
@@ -511,6 +527,12 @@ const RU_STATIC = {
   'App designed and developed by':'Приложение разработал', 'Saved':'Сохранено'
 };
 const ZH_STATIC = {
+  'Touch screen':'触摸屏',
+  'No touch screen was found on this PC.':'这台电脑上没有找到触摸屏。',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'在设备层面关掉触摸屏，也就是「设备管理器 → 禁用设备」那个开关：玻璃上放着的手掌不会再把指针带走。每次切换，Windows 都会请求管理员确认。',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'这台电脑上报了 {n} 个触摸集合（笔记本会把同一块玻璃转发多份），所以每一个都会被切换。',
+  'The touch screen could not be changed.':'触摸屏没能切换。',
+  'Windows did not approve the change.':'Windows 没有批准这次更改。',
   'DeepSeek API key':'DeepSeek API 密钥',
   'Paste the API key':'粘贴 API 密钥',
   'Paid in so far (optional)':'累计充值（可选）',
@@ -649,6 +671,12 @@ const ZH_STATIC = {
   'this screen cannot be remembered by name':'这块屏幕无法按名称记住'
 };
 const ZH_HANT_STATIC = {
+  'Touch screen':'觸控螢幕',
+  'No touch screen was found on this PC.':'這台電腦上沒有找到觸控螢幕。',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'在裝置層級關掉觸控螢幕，也就是「裝置管理員 → 停用裝置」那個開關：玻璃上放著的手掌不會再把指標帶走。每次切換，Windows 都會要求系統管理員確認。',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'這台電腦上報了 {n} 個觸控集合（筆電會把同一塊玻璃轉發多份），所以每一個都會被切換。',
+  'The touch screen could not be changed.':'觸控螢幕沒能切換。',
+  'Windows did not approve the change.':'Windows 沒有批准這次變更。',
   'DeepSeek API key':'DeepSeek API 金鑰',
   'Paste the API key':'貼上 API 金鑰',
   'Paid in so far (optional)':'累計儲值（選填）',
@@ -787,6 +815,12 @@ const ZH_HANT_STATIC = {
   'this screen cannot be remembered by name':'這塊螢幕無法按名稱記住'
 };
 const JA_STATIC = {
+  'Touch screen':'タッチスクリーン',
+  'No touch screen was found on this PC.':'この PC にはタッチスクリーンが見つかりませんでした。',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'デバイス マネージャーの [デバイスの無効化] と同じスイッチで、デバイス レベルでタッチスクリーンをオフにします。ガラスに手のひらを置いてもポインターが動きません。切り替えるたびに Windows が管理者の承認を求めます。',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'この PC ではタッチスクリーンが {n} 回報告されているため、そのすべてを切り替えます。',
+  'The touch screen could not be changed.':'タッチスクリーンを切り替えられませんでした。',
+  'Windows did not approve the change.':'Windows が変更を承認しませんでした。',
   'DeepSeek API key':'DeepSeek APIキー',
   'Paste the API key':'APIキーを貼り付け',
   'Paid in so far (optional)':'累計入金（任意）',
@@ -912,6 +946,12 @@ const JA_STATIC = {
   'Model data':'モデルのデータ'
 };
 const KO_STATIC = {
+  'Touch screen':'터치스크린',
+  'No touch screen was found on this PC.':'이 PC에서 터치스크린을 찾지 못했습니다.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'장치 관리자의 [장치 사용 안 함]과 같은 스위치로 장치 수준에서 터치스크린을 끕니다. 유리에 손바닥을 올려도 포인터가 움직이지 않습니다. 전환할 때마다 Windows가 관리자 승인을 요청합니다.',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'이 PC에서는 터치스크린이 {n}번 보고되므로 모두 전환합니다.',
+  'The touch screen could not be changed.':'터치스크린을 전환하지 못했습니다.',
+  'Windows did not approve the change.':'Windows가 변경을 승인하지 않았습니다.',
   'DeepSeek API key':'DeepSeek API 키',
   'Paste the API key':'API 키 붙여넣기',
   'Paid in so far (optional)':'누적 충전 (선택)',
@@ -1052,6 +1092,12 @@ const KO_STATIC = {
   'Русский':'Русский'
 };
 const UK_STATIC = {
+  'Touch screen':'Сенсорний екран',
+  'No touch screen was found on this PC.':'На цьому комп\'ютері сенсорного екрана не знайдено.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'Вимикає сенсорний екран на рівні пристрою — той самий перемикач «Вимкнути пристрій» у Диспетчері пристроїв, щоб долоня на склі не зрушувала вказівник. Щоразу Windows запитує права адміністратора.',
+  'The touch screen is reported {n} times on this PC, so all of them are switched.':'На цьому комп\'ютері сенсорний екран заявлено {n} разів, тому вимикаються всі.',
+  'The touch screen could not be changed.':'Не вдалося перемкнути сенсорний екран.',
+  'Windows did not approve the change.':'Windows не схвалила зміну.',
   'DeepSeek API key':'Ключ API DeepSeek',
   'Paste the API key':'Вставте ключ API',
   'Paid in so far (optional)':'Усього поповнено (необов’язково)',
@@ -2105,6 +2151,60 @@ document.getElementById('lang').addEventListener('change', e => {
 });
 
 /* ---- General --------------------------------------------------------------- */
+/* The touch screen. Windows has no per-app way to ignore a touch screen: the glass reports taps to
+   whatever is under them. So this is the device switch itself — the one Device Manager's "Disable
+   device" offers — which is also the only one that lasts, so a palm on the glass cannot drag the
+   pointer while the machine sits on a stand with a keyboard. Reading it costs nothing; changing it
+   needs administrator rights, which Windows asks for on the spot: one consent dialog per switch,
+   never at launch, and none at all when it is already where it is being asked to go. */
+const TOUCH_CAPTION = 'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.';
+const TOUCH_COUNT = 'The touch screen is reported {n} times on this PC, so all of them are switched.';
+const TOUCH_NONE = 'No touch screen was found on this PC.';
+const TOUCH_FAILED = 'The touch screen could not be changed.';
+const TOUCH_DECLINED = 'Windows did not approve the change.';
+const touchScreen = { found:0, value:true, busy:false, known:false };
+function drawTouch(){
+  const sw = document.getElementById('sw-touch');
+  const cap = document.getElementById('cap-touch');
+  sw.classList.toggle('on', touchScreen.value);
+  sw.setAttribute('aria-checked', touchScreen.value ? 'true' : 'false');
+  // Nothing is offered before the device tree has been read, or on a machine that has no glass to
+  // read: a switch that does nothing when pressed is worse than one that is plainly not there.
+  sw.disabled = touchScreen.busy || !touchScreen.known || !touchScreen.found;
+  if(touchScreen.known && !touchScreen.found){
+    cap.textContent = ui(TOUCH_NONE, TOUCH_NONE);
+    return;
+  }
+  let caption = ui(TOUCH_CAPTION, TOUCH_CAPTION);
+  if(touchScreen.found > 1){
+    caption += ' ' + ui(TOUCH_COUNT, TOUCH_COUNT).replace('{n}', String(touchScreen.found));
+  }
+  cap.textContent = caption;
+}
+/* The state Rust answers with is the device tree's own verdict: `disabled` means the glass no longer
+   takes taps, which is the switch reading off — not on. */
+function setTouch(st){
+  if(!st || typeof st !== 'object') return;
+  touchScreen.found = typeof st.found === 'number' ? st.found : 0;
+  touchScreen.value = !st.disabled;
+  touchScreen.known = true;
+}
+document.getElementById('sw-touch').addEventListener('click', () => {
+  if(touchScreen.busy || !touchScreen.known || !touchScreen.found) return;
+  const want = !touchScreen.value;
+  touchScreen.busy = true;
+  touchScreen.value = want;   // felt at once, locked until the answer
+  drawTouch();
+  invoke('set_touch_enabled', { on: want })
+    // A refusal comes back as a code, not a sentence: the page owns the language and the detail is
+    // in run.log. Either way the switch is then drawn from the device tree, never from the click.
+    .then(st => setTouch(st), e => {
+      const declined = String(errText(e)).indexOf('declined') >= 0;
+      strip(ui(declined ? TOUCH_DECLINED : TOUCH_FAILED, declined ? TOUCH_DECLINED : TOUCH_FAILED));
+      return call('get_touch_state', undefined, null).then(setTouch);
+    })
+    .then(() => { touchScreen.busy = false; drawTouch(); });
+});
 document.getElementById('btn-data').addEventListener('click', () => {
   invoke('open_data_dir').catch(e => strip('open_data_dir failed: ' + errText(e)));
 });
@@ -2165,6 +2265,7 @@ function renderAll(){
   drawSwitch(document.getElementById('sw-autostart'), autostart);
   drawSwitch(document.getElementById('sw-move'), moveHandle);
   drawSwitch(document.getElementById('sw-adaptive'), adaptivePill);
+  drawTouch();
   if(updState) renderUpdate(updState);
   document.getElementById('title').textContent = ui(TITLES[curTab], TITLES[curTab]);
 }
@@ -2200,6 +2301,12 @@ function boot(){
   autostart.refresh();
   moveHandle.refresh();
   adaptivePill.refresh();
+  // A query of the device tree, not a setting: it is read once when this window opens, and again
+  // after every switch, because what it shows is what Windows says the glass is doing.
+  call('get_touch_state', undefined, null).then(st => {
+    setTouch(st || { found:0, disabled:false });
+    drawTouch();
+  });
 }
 /* Readings and the accent can change while the window is behind something else; coming back to it is
    when the old values are wrong, so that is when they are read again. */

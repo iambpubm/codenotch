@@ -28,6 +28,7 @@ mod diag;
 mod dropzones;
 mod settings_window;
 mod topmost;
+mod touch;
 mod updater;
 
 use std::sync::Mutex;
@@ -1836,6 +1837,28 @@ fn set_adaptive_pill(app: AppHandle, on: bool) -> bool {
     on
 }
 
+/// The touch screen as the device tree reports it. Reading it needs no administrator rights, but it
+/// does start PowerShell once, so it stays off the main thread and out of the frame budget.
+#[tauri::command]
+async fn get_touch_state() -> touch::TouchState {
+    tauri::async_runtime::spawn_blocking(touch::read)
+        .await
+        .unwrap_or_default()
+}
+
+/// Turning the touch screen off (or back on) needs administrator rights. `touch::set_enabled` hands
+/// that half to an elevated copy of the same script, so Windows raises its own consent dialog once
+/// per switch — never at launch, and never for a state that is already the one asked for.
+#[tauri::command]
+async fn set_touch_enabled(on: bool) -> Result<touch::TouchState, String> {
+    let state = tauri::async_runtime::spawn_blocking(move || touch::set_enabled(on))
+        .await
+        .map_err(|e| format!("the switch did not finish: {e}"))?;
+    // The refusal is a code the page turns into its own sentence ("declined", "not-found",
+    // "unchanged", "failed"); the detail behind a failure is in run.log.
+    state.map_err(String::from)
+}
+
 /// One attached monitor, as Settings lists it.
 #[derive(serde::Serialize)]
 pub struct MonitorInfo {
@@ -2129,6 +2152,8 @@ fn main() {
             set_move_handle,
             get_adaptive_pill,
             set_adaptive_pill,
+            get_touch_state,
+            set_touch_enabled,
             dropzones::get_zones,
             settings_window::get_system_look,
             settings_window::quit_app,

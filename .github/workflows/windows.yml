@@ -40,6 +40,12 @@ jobs:
       - name: Test light surface theme
         run: node --test test-light-surface.cjs
 
+      # The notch is drawn for the right-hand edge and turned onto the other three, and nothing else
+      # checks that turn: a rule written for one orientation and forgotten in the other still parses
+      # and still builds, and shows up only as a shape pointing the wrong way.
+      - name: Test the edge layouts
+        run: node --test test-edge-layout.cjs
+
       - name: Test Korean card localization
         run: node --test scripts/test-ko-i18n.cjs
 

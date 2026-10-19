@@ -93,8 +93,11 @@
   .pct{font-size:15px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
 
   /* The business group: the workbench's three counts, told apart from the providers by a hairline.
-     The pill is a column, so the separator is a rule across its width — a plain gap would read as
-     "one more provider", which is exactly what these three are not. */
+     The pill is a column on the upright edges, so here the separator is a rule across its width — a
+     plain gap would read as "one more provider", which is exactly what these three are not. The
+     flat edges turn the pill into a row, and the same hairline has to turn with it (see the edge
+     section below): one rule written for one orientation and forgotten in the other reads as a
+     stray dash floating across the bar. */
   .sep{width:calc(var(--ring) - 14px);height:1px;background:var(--ink-dim);opacity:.4}
   /* A count has no denominator, so the ring is a frame around the number rather than a filled arc.
      The number is sized by how many characters it has: `compactCount` caps that at five, and five
@@ -208,6 +211,10 @@
   }
   body[data-edge="top"] #pill::before,body[data-edge="top"] #pill::after,
   body[data-edge="bottom"] #pill::before,body[data-edge="bottom"] #pill::after{right:auto;top:auto;bottom:auto}
+  /* The hairline between the providers and the counts, turned with the pill: a column wants a rule
+     across its width, a row wants one across its height. Same 14 px the ring gives up on the upright
+     edges, so the business group keeps the same air around it whichever way the bar lies. */
+  body[data-edge="top"] .sep,body[data-edge="bottom"] .sep{width:1px;height:calc(var(--ring) - 14px)}
   body[data-edge="top"] #pill{top:0;border-radius:0 0 20px 20px;border-top:none}
   body[data-edge="top"] #pill::before{top:0;left:calc(-1 * var(--fillet));background:radial-gradient(circle at 0 100%, transparent calc(var(--fillet) - 1.5px), var(--edge) calc(var(--fillet) - 0.5px), var(--pill) calc(var(--fillet) + 0.5px))}
   body[data-edge="top"] #pill::after{top:0;right:calc(-1 * var(--fillet));background:radial-gradient(circle at 100% 100%, transparent calc(var(--fillet) - 1.5px), var(--edge) calc(var(--fillet) - 0.5px), var(--pill) calc(var(--fillet) + 0.5px))}
