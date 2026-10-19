@@ -46,13 +46,15 @@ pub const BUILD: &str = "r31";
 /// 300 clipped it once it held three window blocks plus the session list, and 460 clipped
 /// Antigravity's two model groups once the reading was stale and an agent was working.
 ///
-/// The CyberBrain group is what set the current figure. Three more cells of the same 71 px plus the
-/// hairline between the groups and the gaps around it add 3 × 71 + 4 × 14 + 1 = 270, taking a
-/// five-provider pill from 447 to 717; with both fillets and the orb that is 823, so 900 keeps the
-/// orb its clearance and still fits any screen this app runs on. The window is clamped to the
-/// monitor (`set_size` in `apply_notch_layout`), and the pill is what gets clipped when that
-/// clamp bites — so a machine showing more providers than this needs the number raised again,
-/// by the same arithmetic.
+/// The CyberBrain group is what set the current figure, and the tools ring has since taken it up
+/// again. Its three cells, the hairline before them, and the gaps around everything add
+/// 3 × 71 + 4 × 14 + 1 = 270, taking a five-provider pill from 447 to 717; the tools group adds a
+/// fourth cell and a second hairline, another 1 × 71 + 2 × 14 + 1 = 100, for 817. Measured on the
+/// page as it draws (nine cells, two hairlines, the real gaps): 789, and 856 with one fillet and the
+/// orb, which is the pair that actually has to fit. So 900 still keeps the orb its clearance and
+/// still fits any screen this app runs on. The window is clamped to the monitor (`set_size` in
+/// `apply_notch_layout`), and the pill is what gets clipped when that clamp bites — so a machine
+/// showing more providers than this needs the number raised again, by the same arithmetic.
 pub const NOTCH_LONG: f64 = 900.0;
 
 pub struct AppState {
@@ -1847,8 +1849,8 @@ async fn get_touch_state() -> touch::TouchState {
 }
 
 /// Turning the touch screen off (or back on) needs administrator rights. `touch::set_enabled` hands
-/// that half to an elevated copy of the same script, so Windows raises its own consent dialog once
-/// per switch — never at launch, and never for a state that is already the one asked for.
+/// that half to a process that has them — a task registered the first time, silent from then on —
+/// and always answers with the state read back from the device tree.
 #[tauri::command]
 async fn set_touch_enabled(on: bool) -> Result<touch::TouchState, String> {
     let state = tauri::async_runtime::spawn_blocking(move || touch::set_enabled(on))
@@ -1856,6 +1858,20 @@ async fn set_touch_enabled(on: bool) -> Result<touch::TouchState, String> {
         .map_err(|e| format!("the switch did not finish: {e}"))?;
     // The refusal is a code the page turns into its own sentence ("declined", "not-found",
     // "unchanged", "failed"); the detail behind a failure is in run.log.
+    state.map_err(String::from)
+}
+
+/// The notch's one-click switch, and the same path the Settings row takes. Reads the devices, then
+/// asks for the opposite of what they say, so a state that changed behind our back still ends up
+/// where the click meant it to.
+#[tauri::command]
+async fn toggle_touch() -> Result<touch::TouchState, String> {
+    let state = tauri::async_runtime::spawn_blocking(|| {
+        let now = touch::read();
+        touch::set_enabled(now.disabled)
+    })
+    .await
+    .map_err(|e| format!("the switch did not finish: {e}"))?;
     state.map_err(String::from)
 }
 
@@ -2027,8 +2043,17 @@ fn adopt_system_proxy() {
 }
 
 fn main() {
+    // The elevated half of the touch switch. This is our own exe, started by the task or by the one
+    // consent dialog, with the rights a devnode needs; it draws nothing and answers the request on
+    // disk. Returns before any of the app is built, so no window is ever created on this path.
+    if let Some(code) = touch::cli(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     #[cfg(windows)]
     adopt_system_proxy();
+    // The files the previous touch switch wrote are gone from %TEMP% as of this version; this clears
+    // what older ones left behind, once, before anything else happens.
+    touch::retire_old_scripts();
     let args: Vec<String> = std::env::args().collect();
     if let Some(cmd) = args.get(1) {
         // Attaching on the GUI path too tied the notch to whatever cmd.exe launched it: closing that
@@ -2154,6 +2179,7 @@ fn main() {
             set_adaptive_pill,
             get_touch_state,
             set_touch_enabled,
+            toggle_touch,
             dropzones::get_zones,
             settings_window::get_system_look,
             settings_window::quit_app,

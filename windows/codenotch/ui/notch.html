@@ -99,6 +99,15 @@
      section below): one rule written for one orientation and forgotten in the other reads as a
      stray dash floating across the bar. */
   .sep{width:calc(var(--ring) - 14px);height:1px;background:var(--ink-dim);opacity:.4}
+  /* The tools group: the switches that measure nothing, on their own side of a second hairline, so
+     the ring at the end never reads as a fourth count. One ring today — the touch screen — and the
+     line is the room the next one will need. It is a button, so it keeps the ring's size: what it
+     loses when the screen takes taps is the track's body and the slash across the mark, not a label. */
+  .tool-mark{width:21px;height:21px;display:block}
+  .cell.tool .tool-slash{opacity:0;transition:opacity .18s ease}
+  .cell.tool.off .tool-slash{opacity:1}
+  .cell.tool.off .tool-mark{opacity:.6}
+  .cell.tool.absent{opacity:.35}
   /* A count has no denominator, so the ring is a frame around the number rather than a filled arc.
      The number is sized by how many characters it has: `compactCount` caps that at five, and five
      would not fit the ring at the size three does. */
@@ -1448,7 +1457,18 @@ function renderRing(){
       +(bs.length?`<div class="sep"></div>`:'')
       +bs.map((b,i)=>`<div class="cell" data-p="b:${b.id}" style="--i:${ps.length+i}">
         <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg><div class="bnum"></div></div>
-        <div class="pct"></div></div>`).join('');
+        <div class="pct"></div></div>`).join('')
+      // The tools group, behind its own hairline: a button, not a reading. Its mark is a screen with
+      // a finger on it, struck through while the glass takes no taps.
+      +`<div class="sep"></div>
+        <div class="cell tool" data-p="tool:touch" style="--i:${ps.length+bs.length}">
+        <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg>
+          <div class="glyph"><svg class="tool-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6.2" y="3.2" width="11.6" height="17.6" rx="2.6"/>
+            <circle cx="12" cy="8.4" r="1.9" fill="currentColor" stroke="none"/>
+            <line class="tool-slash" x1="4.4" y1="19.6" x2="19.6" y2="4.4" stroke-width="2"/>
+          </svg></div></div>
+        <div class="pct"></div></div>`;
     pill.dataset.cells=want;
   }
   for(const p of ps){
@@ -1508,11 +1528,36 @@ function renderRing(){
     label.style.color=b.color;
     cell.classList.toggle('stale',brain.status==='stale');
   }
+  renderTool();
   // The folded bar's own reading, off the same data and the same precedence. Written only when it
   // changes, so a render that alters nothing touches nothing.
   const rs=railState();
   if(document.body.dataset.rail!==rs) document.body.dataset.rail=rs;
   reportHot(); // a provider appearing or leaving resizes the pill
+}
+
+/* The tools ring. It is a switch, so it draws no arc and no number: the track says the ring is there,
+   the mark says what it switches, and a strike through the mark says the glass takes no taps. The
+   shell is kept apart from the mark so the state can change without rebuilding the element under the
+   pointer — the click handler holds on to it across the round trip. */
+let touchState=null, touchAt=0;
+function renderTool(){
+  const cell=pill.querySelector('.cell.tool'); if(!cell) return;
+  const svg=cell.querySelector('svg.ring'); if(!svg) return;
+  const off=!!(touchState&&touchState.disabled);
+  svg.innerHTML=`<circle cx="28" cy="28" r="22" fill="${HOLE}"/>`
+    +`<circle cx="28" cy="28" r="25" fill="none" stroke="${TRACK}" stroke-width="5" opacity="${off?0.45:1}"/>`;
+  cell.classList.toggle('off',off);
+  cell.classList.toggle('absent',!!(touchState&&touchState.found===0));
+}
+// Reading the device tree walks every HID collection, which is cheap but not free, and the notch
+// unfolds on every approach. Two seconds apart is enough to catch a switch thrown from Settings
+// without doing that work twice for one hover.
+function refreshTouch(force){
+  const now=Date.now();
+  if(!force&&now-touchAt<2000) return;
+  touchAt=now;
+  invoke('get_touch_state').then(s=>{touchState=s||null;renderTool();}).catch(()=>{});
 }
 
 function resetCopy(ms){
@@ -1832,6 +1877,9 @@ document.addEventListener('mousemove',e=>{
   if(hot){
     clearTimeout(hideTimer);
     const id=cellAt(e.clientX,e.clientY);
+    // The tools ring answers a click, not a hover: a card over it would name a provider that is not
+    // under the pointer, and the ring already draws the only thing there is to say about a switch.
+    if(id&&id.indexOf('tool:')===0){ hoverId=null; if(card.classList.contains('show')) hideCard(); return; }
     if(id&&id!==hoverId){ hoverId=id; if(card.classList.contains('show')){ renderCard(); armWatchdog(); } }
     if(!card.classList.contains('show')) showCard();
   }
@@ -1878,6 +1926,25 @@ function settle(id){
   delete refreshing[id];
   renderRing();
 }
+/* A press on a tool holds the ring until the answer lands, the way a press on a ring does. The switch
+   itself runs in a process that has the rights for it, so it takes a moment; what comes back is the
+   device tree's reading, never the state that was asked for. */
+async function runTool(name){
+  if(name!=='touch') return;
+  const cell=pill.querySelector('.cell.tool'); if(!cell) return;
+  const wrap=cell.querySelector('.ringwrap'); if(!wrap||wrap.classList.contains('pressed')) return;
+  wrap.classList.add('pressed');
+  try{
+    touchState=await invoke('toggle_touch');
+  }catch(e){
+    jslog('toggle_touch: '+(e&&e.message||e));
+    notice('touch: '+((e&&e.message)||e));
+    refreshTouch(true);
+  }finally{
+    wrap.classList.remove('pressed');
+    renderTool();
+  }
+}
 // Alt+drag, the Mac's ⌥-drag. Without Alt a press on the pill is only ever a click — a ring
 // refreshes (#244) — so one that slips can no longer carry the notch off (#251).
 pill.addEventListener('mousedown',e=>{ if(e.button!==0||folded)return; press={x:e.clientX,y:e.clientY,id:cellAt(e.clientX,e.clientY)||hoverId,alt:e.altKey}; });
@@ -1890,7 +1957,12 @@ document.addEventListener('mousemove',e=>{
 });
 document.addEventListener('mouseup',e=>{
   if(e.button!==0)return;
-  if(press&&!dragging&&press.id) refreshRing(press.id);
+  if(press&&!dragging&&press.id){
+    // A cell id names a provider; a `tool:` id names a switch. Both come out of the same hit test so
+    // the pill keeps one meaning for "what is under the pointer", and only the work differs.
+    if(press.id.indexOf('tool:')===0) runTool(press.id.slice(5));
+    else refreshRing(press.id);
+  }
   press=null;
 });
 // The Mac's right-click menu, naming the ring or card under the pointer; WebView2's own menu never shows
@@ -1970,10 +2042,13 @@ function pressIn(el){
    outlines of two sizes, which reads as four different things instead of one notch offered a place. */
 function pillShapes(){
   const cells=Math.max(1,pill.querySelectorAll('.cell').length);
+  const seps=pill.querySelectorAll('.sep').length;
   const ring=(pill.querySelector('.ringwrap')||{}).offsetHeight||44;
   const label=(pill.querySelector('.pct')||{}).offsetHeight||20;
   const ends=36, between=14, underRing=6;
-  return { depth:70, length:ends+cells*(ring+underRing+label)+(cells-1)*between };
+  // A hairline is a child like any other, so it takes a gap either side of it. Left out, the outline
+  // offered for a landing is shorter than the notch that will land there.
+  return { depth:70, length:ends+cells*(ring+underRing+label)+(cells-1)*between+seps*(2*between+1) };
 }
 moveHandle.addEventListener('mousedown',e=>{
   if(e.button!==0||!near(moveAt,e.clientX,e.clientY)) return;
@@ -2006,7 +2081,7 @@ function scheduleFold(){
   if(foldAllowed()) foldTimer=setTimeout(()=>{ if(foldAllowed()) setFolded(true); },FOLD_GRACE);
 }
 function applyUiFlags(f){ onHover=!!(f&&f.notch_on_hover); scheduleFold(); }
-listen('notch_pointer',e=>{ pointerIn=e.payload===true; if(pointerIn) unfold(); else scheduleFold(); }).catch(()=>{});
+listen('notch_pointer',e=>{ pointerIn=e.payload===true; if(pointerIn){ unfold(); refreshTouch(); } else scheduleFold(); }).catch(()=>{});
 listen('ui_flags',e=>applyUiFlags(e.payload)).catch(()=>{});
 listen('pill_backdrop',e=>{
   if(e.payload==='dark'||e.payload==='light') document.body.dataset.behind=e.payload;
@@ -2015,6 +2090,9 @@ listen('pill_backdrop',e=>{
 invoke('get_ui_flags').then(applyUiFlags).catch(()=>{});
 listen('move_handle',e=>{ showMove=e.payload!==false; reportHot(); }).catch(()=>{});
 invoke('get_move_handle').then(v=>{ showMove=v!==false; reportHot(); }).catch(()=>{});
+// The tools ring draws itself from the device tree, so its first reading is taken here and again
+// every time the notch unfolds — the switch can also be thrown from Settings.
+refreshTouch();
 
 listen('workbuddy',e=>{usage=e.payload||usage;settle('workbuddy');renderRing();if(card.classList.contains('show'))renderCard();})
   .catch(e=>notice('listen(workbuddy) failed: '+e));

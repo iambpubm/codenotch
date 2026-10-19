@@ -270,7 +270,7 @@ function esc(s){
 const PT_BR_STATIC = {
   'Touch screen':'Tela de toque',
   'No touch screen was found on this PC.':'Nenhuma tela de toque foi encontrada neste PC.',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'Desliga a tela de toque no nível do dispositivo — o mesmo interruptor «Desativar dispositivo» do Gerenciador de Dispositivos — para que a palma apoiada no vidro não mova o ponteiro. O Windows pede aprovação de administrador a cada troca.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'Desliga a tela de toque no nível do dispositivo — o mesmo interruptor «Desativar dispositivo» do Gerenciador de Dispositivos — para que a palma apoiada no vidro não mova o ponteiro. O Windows pede aprovação de administrador uma vez, na primeira troca; depois disso, alterna em silêncio.',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'A tela de toque é informada {n} vezes neste PC, então todas são desativadas.',
   'The touch screen could not be changed.':'Não foi possível alterar a tela de toque.',
   'Windows did not approve the change.':'O Windows não aprovou a alteração.',
@@ -416,7 +416,7 @@ const PT_BR_STATIC = {
 const RU_STATIC = {
   'Touch screen':'Сенсорный экран',
   'No touch screen was found on this PC.':'На этом компьютере сенсорный экран не найден.',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'Выключает сенсорный экран на уровне устройства — тот же переключатель «Отключить устройство» в Диспетчере устройств, чтобы ладонь на стекле не сдвигала указатель. При каждом переключении Windows запрашивает права администратора.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'Выключает сенсорный экран на уровне устройства — тот же переключатель «Отключить устройство» в Диспетчере устройств, чтобы ладонь на стекле не сдвигала указатель. Windows запрашивает права администратора один раз, при первом переключении; дальше переключает без запросов.',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'На этом компьютере сенсорный экран заявлен {n} раз, поэтому отключаются все.',
   'The touch screen could not be changed.':'Не удалось переключить сенсорный экран.',
   'Windows did not approve the change.':'Windows не одобрила изменение.',
@@ -529,7 +529,7 @@ const RU_STATIC = {
 const ZH_STATIC = {
   'Touch screen':'触摸屏',
   'No touch screen was found on this PC.':'这台电脑上没有找到触摸屏。',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'在设备层面关掉触摸屏，也就是「设备管理器 → 禁用设备」那个开关：玻璃上放着的手掌不会再把指针带走。每次切换，Windows 都会请求管理员确认。',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'在设备层面关掉触摸屏，也就是「设备管理器 → 禁用设备」那个开关：玻璃上放着的手掌不会再把指针带走。第一次切换时 Windows 会请求一次管理员确认，之后就静默切换。',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'这台电脑上报了 {n} 个触摸集合（笔记本会把同一块玻璃转发多份），所以每一个都会被切换。',
   'The touch screen could not be changed.':'触摸屏没能切换。',
   'Windows did not approve the change.':'Windows 没有批准这次更改。',
@@ -673,7 +673,7 @@ const ZH_STATIC = {
 const ZH_HANT_STATIC = {
   'Touch screen':'觸控螢幕',
   'No touch screen was found on this PC.':'這台電腦上沒有找到觸控螢幕。',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'在裝置層級關掉觸控螢幕，也就是「裝置管理員 → 停用裝置」那個開關：玻璃上放著的手掌不會再把指標帶走。每次切換，Windows 都會要求系統管理員確認。',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'在裝置層級關掉觸控螢幕，也就是「裝置管理員 → 停用裝置」那個開關：玻璃上放著的手掌不會再把指標帶走。第一次切換時 Windows 會要求一次系統管理員確認，之後就靜默切換。',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'這台電腦上報了 {n} 個觸控集合（筆電會把同一塊玻璃轉發多份），所以每一個都會被切換。',
   'The touch screen could not be changed.':'觸控螢幕沒能切換。',
   'Windows did not approve the change.':'Windows 沒有批准這次變更。',
@@ -817,7 +817,7 @@ const ZH_HANT_STATIC = {
 const JA_STATIC = {
   'Touch screen':'タッチスクリーン',
   'No touch screen was found on this PC.':'この PC にはタッチスクリーンが見つかりませんでした。',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'デバイス マネージャーの [デバイスの無効化] と同じスイッチで、デバイス レベルでタッチスクリーンをオフにします。ガラスに手のひらを置いてもポインターが動きません。切り替えるたびに Windows が管理者の承認を求めます。',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'デバイス マネージャーの [デバイスの無効化] と同じスイッチで、デバイス レベルでタッチスクリーンをオフにします。ガラスに手のひらを置いてもポインターが動きません。最初の切り替えのときだけ Windows が管理者の承認を求め、その後は静かに切り替わります。',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'この PC ではタッチスクリーンが {n} 回報告されているため、そのすべてを切り替えます。',
   'The touch screen could not be changed.':'タッチスクリーンを切り替えられませんでした。',
   'Windows did not approve the change.':'Windows が変更を承認しませんでした。',
@@ -948,7 +948,7 @@ const JA_STATIC = {
 const KO_STATIC = {
   'Touch screen':'터치스크린',
   'No touch screen was found on this PC.':'이 PC에서 터치스크린을 찾지 못했습니다.',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'장치 관리자의 [장치 사용 안 함]과 같은 스위치로 장치 수준에서 터치스크린을 끕니다. 유리에 손바닥을 올려도 포인터가 움직이지 않습니다. 전환할 때마다 Windows가 관리자 승인을 요청합니다.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'장치 관리자의 [장치 사용 안 함]과 같은 스위치로 장치 수준에서 터치스크린을 끕니다. 유리에 손바닥을 올려도 포인터가 움직이지 않습니다. 처음 전환할 때만 Windows가 관리자 승인을 한 번 요청하고, 그다음부터는 조용히 전환됩니다.',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'이 PC에서는 터치스크린이 {n}번 보고되므로 모두 전환합니다.',
   'The touch screen could not be changed.':'터치스크린을 전환하지 못했습니다.',
   'Windows did not approve the change.':'Windows가 변경을 승인하지 않았습니다.',
@@ -1094,7 +1094,7 @@ const KO_STATIC = {
 const UK_STATIC = {
   'Touch screen':'Сенсорний екран',
   'No touch screen was found on this PC.':'На цьому комп\'ютері сенсорного екрана не знайдено.',
-  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.':'Вимикає сенсорний екран на рівні пристрою — той самий перемикач «Вимкнути пристрій» у Диспетчері пристроїв, щоб долоня на склі не зрушувала вказівник. Щоразу Windows запитує права адміністратора.',
+  'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'Вимикає сенсорний екран на рівні пристрою — той самий перемикач «Вимкнути пристрій» у Диспетчері пристроїв, щоб долоня на склі не зрушувала вказівник. Windows запитує права адміністратора один раз, під час першого перемикання; далі перемикає без запитів.',
   'The touch screen is reported {n} times on this PC, so all of them are switched.':'На цьому комп\'ютері сенсорний екран заявлено {n} разів, тому вимикаються всі.',
   'The touch screen could not be changed.':'Не вдалося перемкнути сенсорний екран.',
   'Windows did not approve the change.':'Windows не схвалила зміну.',
@@ -2157,7 +2157,7 @@ document.getElementById('lang').addEventListener('change', e => {
    pointer while the machine sits on a stand with a keyboard. Reading it costs nothing; changing it
    needs administrator rights, which Windows asks for on the spot: one consent dialog per switch,
    never at launch, and none at all when it is already where it is being asked to go. */
-const TOUCH_CAPTION = 'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. Windows asks for administrator approval each time.';
+const TOUCH_CAPTION = 'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.';
 const TOUCH_COUNT = 'The touch screen is reported {n} times on this PC, so all of them are switched.';
 const TOUCH_NONE = 'No touch screen was found on this PC.';
 const TOUCH_FAILED = 'The touch screen could not be changed.';

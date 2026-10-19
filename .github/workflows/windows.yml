@@ -46,6 +46,11 @@ jobs:
       - name: Test the edge layouts
         run: node --test test-edge-layout.cjs
 
+      # The tools ring, and the promise that the touch switch starts no script: the version that did
+      # was flagged by the machine's security suite.
+      - name: Test the tools ring
+        run: node --test test-tools-cell.cjs
+
       - name: Test Korean card localization
         run: node --test scripts/test-ko-i18n.cjs
 
