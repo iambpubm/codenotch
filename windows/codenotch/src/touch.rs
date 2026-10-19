@@ -137,6 +137,16 @@ fn read_script() -> String {
     PS_READ.replace("__FILTER__", TOUCH_FILTER)
 }
 
+/// The elevated script with every placeholder filled in. Kept in one place so a test can ask what
+/// will actually be written, instead of re-doing the substitutions here and drifting out of step
+/// with the code that runs.
+fn apply_script(verb: &str, result: &Path) -> String {
+    PS_APPLY
+        .replace("__FILTER__", TOUCH_FILTER)
+        .replace("__VERB__", verb)
+        .replace("__RESULT__", &escape_single(result))
+}
+
 /// The devices and their state, straight from the device tree. Read-only and needs no rights.
 pub fn read() -> TouchState {
     let path = script_dir().join("read.ps1");
@@ -181,10 +191,7 @@ fn apply_elevated(disable: bool) -> Result<(), &'static str> {
     let _ = std::fs::remove_file(&result);
 
     let verb = if disable { "Disable-PnpDevice" } else { "Enable-PnpDevice" };
-    let body = PS_APPLY
-        .replace("__FILTER__", TOUCH_FILTER)
-        .replace("__VERB__", verb)
-        .replace("__RESULT__", &escape_single(&result));
+    let body = apply_script(verb, &result);
     if write_script(&apply, &body).is_err() {
         return Err("failed");
     }
@@ -334,19 +341,27 @@ HID\\FTSC1000&COL01\\4&293C5861&0&0000|22
     /// expression, and that expression has to be the usage page rather than a device name.
     #[test]
     fn the_read_and_the_write_ask_for_the_same_devices() {
-        for script in [read_script(), PS_APPLY.to_string()] {
-            assert!(script.contains(TOUCH_FILTER), "a script lost the shared filter");
+        let read = read_script();
+        let disable = apply_script("Disable-PnpDevice", Path::new(r"C:\T\result.txt"));
+        let enable = apply_script("Enable-PnpDevice", Path::new(r"C:\T\result.txt"));
+
+        for (name, script) in [("read", &read), ("disable", &disable), ("enable", &enable)] {
+            assert!(script.contains(TOUCH_FILTER), "the {name} script lost the shared filter");
+            for placeholder in ["__FILTER__", "__VERB__", "__RESULT__"] {
+                assert!(!script.contains(placeholder), "the {name} script still holds {placeholder}");
+            }
         }
+
         assert!(TOUCH_FILTER.contains("UP:000D_U:0004"), "the filter is the touch usage page");
         assert!(TOUCH_FILTER.contains("HIDClass"), "and only HID collections");
         assert!(
             !TOUCH_FILTER.to_lowercase().contains("ftsc"),
             "a device name would stop matching on another machine"
         );
+
         // The verb is substituted, not hard-coded twice: one direction must not carry the other's.
-        let disable = PS_APPLY.replace("__FILTER__", TOUCH_FILTER).replace("__VERB__", "Disable-PnpDevice");
-        assert!(disable.contains("Disable-PnpDevice"));
-        assert!(!disable.contains("__VERB__"));
+        assert!(disable.contains("Disable-PnpDevice") && !disable.contains("Enable-PnpDevice"));
+        assert!(enable.contains("Enable-PnpDevice") && !enable.contains("Disable-PnpDevice"));
     }
 
     /// Both halves of a toggle exist under one name each, and the result file is quoted as a literal
