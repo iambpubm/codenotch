@@ -64,8 +64,13 @@ const CM_LOCATE_DEVNODE_NORMAL: u32 = 0;
 /// Disable without the "this may stop the device working" prompt: the point is to do it quietly.
 const CM_DISABLE_UI_NOT_OK: u32 = 0x0000_0004;
 
-/// Waits for the elevated half: 40 polls of the device tree, 50 ms apart.
-const SETTLE_TRIES: usize = 40;
+/// Waits for the elevated half: 100 polls of the device tree, 50 ms apart.
+///
+/// Five seconds, because the wait is not for the switch itself — that is one API call — but for the
+/// process that makes it. The Task Scheduler service has to start a copy of this exe, and the first
+/// switch goes through a consent dialog as well. A window too short here does not fail loudly: it
+/// reports "unchanged" for a switch that lands a moment later, which is the worst of both answers.
+const SETTLE_TRIES: usize = 100;
 const SETTLE_STEP: Duration = Duration::from_millis(50);
 
 // ------------------------------------------------------------------ pure pieces, all unit-tested
@@ -440,14 +445,16 @@ fn launch_elevated(param: &str) -> Result<(), &'static str> {
 }
 
 #[cfg(windows)]
-fn settle(want_disabled: bool, before: TouchState) -> Result<TouchState, &'static str> {
-    let mut state = before;
+fn settle(want_disabled: bool) -> Result<TouchState, &'static str> {
+    // Read first, sleep second: the elevated half has usually finished before this is called (the
+    // in-process path applies synchronously), and a fixed sleep at the top would add 50 ms to every
+    // switch that did not need waiting for.
     for _ in 0..SETTLE_TRIES {
-        std::thread::sleep(SETTLE_STEP);
-        state = read();
+        let state = read();
         if state.disabled == want_disabled {
             return Ok(state);
         }
+        std::thread::sleep(SETTLE_STEP);
     }
     Err("unchanged")
 }
@@ -466,18 +473,18 @@ pub fn set_enabled(on: bool) -> Result<TouchState, &'static str> {
 
     // Already elevated — the helper's own path, and the case of an app started as administrator.
     if apply(want_disabled).is_ok() {
-        return settle(want_disabled, before);
+        return settle(want_disabled);
     }
 
     if !write_request(want_disabled) {
         return Err("failed");
     }
     if task_exists() && run_task() {
-        return settle(want_disabled, before);
+        return settle(want_disabled);
     }
     // First time, or the task is gone: register it and switch in the same elevated run.
     launch_elevated("--touch-setup")?;
-    settle(want_disabled, before)
+    settle(want_disabled)
 }
 
 /// `--touch-setup` / `--touch-apply`. Both run elevated; the difference is only whether the task is
