@@ -37,7 +37,7 @@ Providers that are not installed simply do not get a cell. A config saved with t
 | **z.ai (GLM)** | The existing Z.AI tool credentials — the GLM Coding Plan key in the environment, in the CLI's config, or in a `~/.claude/settings.json` that points `ANTHROPIC_BASE_URL` at a Z.ai console | The plan's session / weekly windows. |
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
 | **CyberBrain** | One aggregate snapshot that a CyberBrain workbench publishes itself, read over its cloud gateway for the account id set in Settings | Overdue items and delivery warnings as two rings below a hairline separator. They are business counts, not allowances, so nothing is filled in: the ring frames the number and the colour carries the judgement, and the hover card lists the items behind it. The workbench rewrites the snapshot only while it is open, so a reading can be hours old and the card says when it was pushed. Nothing else about the workbench is readable from here. |
-| **To-do** | A local list in the workbench's record shape, plus the items in its snapshot | One ring for everything still open, with its arc showing how close the nearest deadline is. The card lists the items, ticks them off on click, and opens itself as a deadline nears — taller the closer it gets. New items, the sort order and pushing them up to CyberBrain are in Settings. |
+| **To-do** | A local list in the workbench's record shape, plus the items in its snapshot | One ring for everything still open, with its arc showing how close the nearest deadline is. The card lists the items, ticks them off on click, opens itself as a deadline nears — taller the closer it gets — and its **+** opens a one-field window beside the pill for writing a new one. The sort order, dates beyond tomorrow and pushing the list up to CyberBrain are in Settings. |
 
 The working-state arc (the thin spinning line inside a ring, the amber pulse when something
 wants your input, and the green pulse when a run has just finished) is drawn for every provider
@@ -395,9 +395,14 @@ file. The card behind the ring lists the local items (click one to tick it off) 
 ones only the snapshot knows about, which are read-only here because the workbench is where they
 came from.
 
-Authoring is in **Settings → To-do**, not on the notch: the notch window is `focusable: false`, so
-no keystroke ever reaches it, and a text field there would silently swallow typing. Ticking off is a
-click, and that is the only edit the notch accepts.
+Authoring is not on the notch in the sense of a text field: the notch window is `focusable: false`,
+so no keystroke ever reaches it, and a text box there would silently swallow typing. The card
+therefore carries a **+** beside its count, and pressing it opens a small window beside the pill —
+one field, today / tomorrow / no date, a priority level, enter to write, Esc to close. It hides rather
+than closes when dismissed, because it is opened on a click and paying for a cold WebView2 start
+every time would make the plus feel broken. The full form (a note, a specific date) is still in
+**Settings → To-do**; ticking off remains a click, and that is the only edit the notch itself
+accepts.
 
 Three rules are carried over from [CornerTodo](https://github.com/nff825/CornerTodo), because each
 solves a problem that is easy to lose in a rewrite:

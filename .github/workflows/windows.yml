@@ -66,6 +66,12 @@ jobs:
       - name: Test card money and credit coverage
         run: node --test test-card-i18n-coverage.cjs
 
+      # The plus on the to-do card opens a second window, and everything it does is a name that only
+      # exists at runtime — `open_quick_add`, `close_quick`, `add_todo`. A typo in any of them is not
+      # a compile error; the page catches it and the window sits there doing nothing.
+      - name: Test the quick-add window's wiring
+        run: node --test test-quick-add.cjs
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

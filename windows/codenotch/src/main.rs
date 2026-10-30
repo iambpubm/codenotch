@@ -26,6 +26,7 @@ mod activity;
 mod cyberbrain;
 mod diag;
 mod dropzones;
+mod quick_window;
 mod settings_window;
 mod topmost;
 mod touch;
@@ -2276,6 +2277,20 @@ fn open_settings(app: AppHandle) {
     settings_window::open(&app);
 }
 
+/// The plus on the to-do card. It cannot be a field in the card itself: the notch window is
+/// `focusable:false` on purpose, so that hovering it never takes the keyboard away from whatever is
+/// being typed into, and no key event reaches that WebView at all.
+#[tauri::command]
+fn open_quick_add(app: AppHandle) {
+    quick_window::open(&app);
+}
+
+/// Hidden rather than destroyed, so the next plus does not pay for a cold WebView2 start.
+#[tauri::command]
+fn close_quick(app: AppHandle) {
+    quick_window::hide(&app);
+}
+
 /// Epoch milliseconds. Every polling module keeps its own copy of this; the tray menu's wording
 /// needs one that is not private to a poller.
 pub fn now_ms() -> u64 {
@@ -2483,6 +2498,8 @@ fn main() {
             update_todo,
             toggle_todo,
             delete_todo,
+            open_quick_add,
+            close_quick,
             set_todo_sort,
             set_todo_auto,
             mark_todos_pushed,

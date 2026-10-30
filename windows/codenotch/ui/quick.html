@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Codenotch</title>
+<style>
+  /* One job: take a line of text. The notch can be clicked but never typed into — it is built with
+     `focusable:false` so hovering it cannot steal the keyboard — so this is a real window, and it
+     borrows the card's palette so the two read as the same surface. Which palette is drawn comes
+     from Rust through `data-theme`, never from `prefers-color-scheme`: correcting a live window's
+     theme does not reliably reach WebView2's own scheme. */
+  :root{
+    --bg:#0a0a0a; --line:#242424; --ink:#fff; --ink-3:#c8c8c8; --ink-dim:#808080;
+    --field:#151515; --chip:#1e1e1e; --chip-line:#3a3a3a; --on:#333333; --accent:#00FF88;
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --line:#e4e4e8; --ink:#1d1d1f; --ink-3:#3c3c43; --ink-dim:#6b6b6b;
+    --field:#f4f4f6; --chip:#ffffff; --chip-line:#d0d0d6; --on:#e8e8ec; --accent:#00A356;
+  }
+  /* The field is `width:100%`, so without this its padding and border sit outside the body's 12 px
+     and it runs past the right edge — measured, not assumed: it was 22 px over. */
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;user-select:none;background:var(--bg)}
+  body{font:13px "Segoe UI",system-ui,sans-serif;color:var(--ink);padding:12px;display:flex;flex-direction:column;gap:8px}
+  #t{font:inherit;font-size:14px;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:9px;padding:7px 10px;outline:none;width:100%;transition:border-color .15s,background .15s}
+  #t::placeholder{color:var(--ink-dim)}
+  #t:focus{border-color:var(--accent);background:var(--bg)}
+  .row{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;overflow:hidden}
+  .lbl{font-size:11px;color:var(--ink-dim);white-space:nowrap;margin-right:3px;flex:0 0 auto}
+  button{font:inherit;font-size:11.5px;color:var(--ink-3);background:var(--chip);border:1px solid var(--chip-line);border-radius:7px;padding:4px 9px;cursor:pointer;white-space:nowrap;flex:0 1 auto;transition:border-color .15s,color .15s,background .15s}
+  button:hover{border-color:var(--accent);color:var(--ink)}
+  button.on{background:var(--on);color:var(--ink);border-color:var(--accent)}
+  .hint{font-size:11px;color:var(--ink-dim);margin-top:auto}
+  .hint b{font-weight:600;color:var(--ink-3)}
+  /* A first-run window with no card behind it: the field should already be the thing under the
+     cursor when it appears, so the whole interaction is type-then-enter. */
+  #t:focus-visible{outline:none}
+</style>
+</head>
+<body>
+  <input id="t" autocomplete="off" spellcheck="false" maxlength="200">
+  <div class="row" id="when"></div>
+  <div class="row" id="lv"></div>
+  <div class="hint" id="hint"></div>
+<script>
+const invoke = window.__TAURI__.core.invoke;
+const listen = window.__TAURI__.event.listen;
+
+/* The words this window needs. It is a separate page from the notch and the settings pane, so it
+   carries its own table rather than reaching across; the keys are the smallest set that still lets
+   the whole interaction be read without English. */
+const TXT = {
+  en:{ph:'A to-do, in one line',date:'Date',today:'Today',tomorrow:'Tomorrow',nodate:'None',
+      pri:'Priority',lvlNone:'None',high:'High',mid:'Medium',low:'Low',save:'save',cancel:'close'},
+  'pt-BR':{ph:'Uma tarefa, em uma linha',date:'Data',today:'Hoje',tomorrow:'Amanhã',nodate:'Nenhuma',
+      pri:'Prioridade',lvlNone:'Nenhuma',high:'Alta',mid:'Média',low:'Baixa',save:'salvar',cancel:'fechar'},
+  zh:{ph:'记一条待办，回车即可',date:'日期',today:'今天',tomorrow:'明天',nodate:'不设',
+      pri:'优先级',lvlNone:'无',high:'高',mid:'中',low:'低',save:'保存',cancel:'关闭'},
+  'zh-Hant':{ph:'記一條待辦，按 Enter 即可',date:'日期',today:'今天',tomorrow:'明天',nodate:'不設',
+      pri:'優先級',lvlNone:'無',high:'高',mid:'中',low:'低',save:'儲存',cancel:'關閉'},
+  ja:{ph:'やることを一行で',date:'日付',today:'今日',tomorrow:'明日',nodate:'なし',
+      pri:'優先度',lvlNone:'なし',high:'高',mid:'中',low:'低',save:'保存',cancel:'閉じる'},
+  ko:{ph:'할 일을 한 줄로',date:'날짜',today:'오늘',tomorrow:'내일',nodate:'없음',
+      pri:'우선순위',lvlNone:'없음',high:'높음',mid:'보통',low:'낮음',save:'저장',cancel:'닫기'},
+  ru:{ph:'Задача одной строкой',date:'Дата',today:'Сегодня',tomorrow:'Завтра',nodate:'Нет',
+      pri:'Приоритет',lvlNone:'Нет',high:'Высокий',mid:'Средний',low:'Низкий',save:'сохранить',cancel:'закрыть'},
+  uk:{ph:'Завдання одним рядком',date:'Дата',today:'Сьогодні',tomorrow:'Завтра',nodate:'Немає',
+      pri:'Пріоритет',lvlNone:'Немає',high:'Високий',mid:'Середній',low:'Низький',save:'зберегти',cancel:'закрити'}
+};
+
+let lang='en';
+/* 今天 / 明天 / 不设。A date with no time ends at the end of that day, the same rule the workbench
+   uses, so "today" written here is still due while today lasts. */
+let when='today';
+/* 无 / 高 / 中 / 低 — the workbench's own words for a level; the empty string is how it spells none. */
+let lvl='';
+
+const field=document.getElementById('t');
+const T=k=>{const t=TXT[lang]||TXT.en;return t[k]||TXT.en[k]||'';};
+
+function iso(d){
+  const p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+function dateFor(){
+  if(when==='none') return '';
+  const d=new Date();
+  if(when==='tomorrow') d.setDate(d.getDate()+1);
+  return iso(d);
+}
+
+function chips(pairs,cur){
+  return pairs.map(([v,label])=>'<button data-v="'+v+'"'+(v===cur?' class="on"':'')+'>'+label+'</button>').join('');
+}
+
+function paint(){
+  document.getElementById('when').innerHTML='<span class="lbl">'+T('date')+'</span>'
+    +chips([['today',T('today')],['tomorrow',T('tomorrow')],['none',T('nodate')]],when);
+  document.getElementById('lv').innerHTML='<span class="lbl">'+T('pri')+'</span>'
+    +chips([['',T('lvlNone')],['高',T('high')],['中',T('mid')],['低',T('low')]],lvl);
+  document.getElementById('hint').innerHTML='<b>↵</b> '+T('save')+' · <b>Esc</b> '+T('cancel');
+  field.placeholder=T('ph');
+}
+
+/* Close without writing. Hidden rather than closed on the Rust side, so the next plus is instant. */
+function dismiss(){ invoke('close_quick').catch(function(){}); }
+
+function save(){
+  const title=field.value.trim();
+  if(!title) return;                       // 空的一行没有可写的东西，留在窗口里等它变满
+  invoke('add_todo',{title:title,date:dateFor(),time:'',level:lvl,note:''})
+    .then(function(){ field.value=''; dismiss(); })
+    .catch(function(){ /* add_todo already reports through the notch's own notice strip */ });
+}
+
+document.getElementById('when').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  when=b.dataset.v; paint();
+});
+document.getElementById('lv').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  lvl=b.dataset.v; paint();
+});
+
+/* Enter writes; while an input method is composing it means "take this candidate", not "save". The
+   check is `isComposing` rather than a keyCode, and it matters most for the languages this app is
+   actually used in: without it, picking a Chinese character with the enter key saves half a line. */
+field.addEventListener('keydown',e=>{
+  if(e.isComposing) return;
+  if(e.key==='Enter'){ e.preventDefault(); save(); }
+});
+
+document.addEventListener('keydown',e=>{
+  if(e.isComposing) return;
+  if(e.key==='Escape'){ e.preventDefault(); dismiss(); }
+});
+
+/* Losing the keyboard closes an empty window — clicking away is a decision to stop. A window with a
+   half-typed line is left alone: a stray click elsewhere should not throw away what was written.
+   `armed` exists because the window can report a blur before it has ever reported focus. */
+let armed=false;
+window.addEventListener('focus',()=>{ armed=true; });
+window.addEventListener('blur',()=>{ if(armed&&!field.value.trim()) dismiss(); });
+
+/* Every open starts blank, including the chips: the last to-do's date is not this one's. */
+listen('quick_reset',()=>{
+  field.value=''; when='today'; lvl=''; paint();
+  field.focus();
+});
+
+invoke('get_lang_resolved').then(v=>{
+  if(typeof v==='string'&&TXT[v]) lang=v;
+}).catch(()=>{}).then(()=>{
+  paint();
+  field.focus();
+});
+</script>
+</body>
+</html>

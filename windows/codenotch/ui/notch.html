@@ -122,6 +122,13 @@
   .s-meta{flex:none;color:var(--ink-dim);white-space:nowrap}
   .s-meta.late{color:var(--crit)}
   .c-count{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
+  /* 写一条待办。这里只能点：窗口是 focusable:false 的，键盘根本到不了这个 WebView，
+     所以按下去开的是另一个真窗口（quick.html），而不是把输入框塞进卡片。 */
+  .t-add{flex:0 0 auto;width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+    font:inherit;font-size:15px;font-weight:500;line-height:1;color:var(--ink-3);
+    background:transparent;border:1px solid var(--card-line);border-radius:6px;padding:0;cursor:pointer;
+    transition:color .15s,border-color .15s,background .15s}
+  .t-add:hover{color:var(--ink);border-color:var(--rest-edge);background:var(--btn)}
   /* 待办卡的一行。整行就是一个按钮：notch 窗口是 focusable:false 的，收不到键盘，
      所以「勾掉一条」只能是点一下，不能是输入框里按回车。 */
   .t-row{display:flex;align-items:flex-start;gap:8px;padding:7px 6px;margin:0 -6px;border-radius:7px;cursor:pointer}
@@ -1262,7 +1269,7 @@ const UI={
       ago:m=>m<60?`${m}분 전`:`${Math.round(m/60)}시간 전`,
       usedLeft:(used,left)=>`${used}% 사용 · ${left}% 남음`,andMore:n=>`외 ${n}개`,updated:a=>`${a}에 마지막 업데이트됨`,
       leftOf:t=>`${t} 남음`,
-      todoRing:'할 일',todoTitle:'할 일',todoNone:'미완료 항목이 없습니다.',todoLocal:'이 PC',todoRemote:'워크벤치',
+      todoRing:'할 일',todoTitle:'할 일',todoAdd:'할 일 추가',todoNone:'미완료 항목이 없습니다.',todoLocal:'이 PC',todoRemote:'워크벤치',
       todoNoDate:'마감 없음',todoDone:'완료',todoLeft:t=>`${t} 남음`,todoLate:t=>`${t} 지남`,
       units:{d:'일',h:'시간',m:'분',none:'1분 미만'}},
   'pt-BR':{locale:'pt-BR',title:n=>'Uso do '+n,resetting:'Renovando…',resetsIn:m=>`Renova em ${m} min`,
@@ -1270,7 +1277,7 @@ const UI={
       ago:m=>m<60?`há ${m} min`:`há ${Math.round(m/60)} h`,
       usedLeft:(used,left)=>`${used}% usado · ${left}% restante`,andMore:n=>`e mais ${n}`,
       leftOf:t=>`${t} restantes`,
-      todoRing:'A fazer',todoTitle:'A fazer',todoNone:'Nada em aberto.',todoLocal:'Neste PC',todoRemote:'Workbench',
+      todoRing:'A fazer',todoTitle:'A fazer',todoAdd:'Adicionar tarefa',todoNone:'Nada em aberto.',todoLocal:'Neste PC',todoRemote:'Workbench',
       todoNoDate:'Sem prazo',todoDone:'Concluído',todoLeft:t=>`faltam ${t}`,todoLate:t=>`${t} atrasado`,
       units:{d:'d',h:'h',m:'min',none:'<1min'}},
   en:{locale:'en-US',title:n=>n+' Usage',resetting:'Resetting…',resetsIn:m=>`Resets in ${m} min`,
@@ -1278,7 +1285,7 @@ const UI={
       ago:m=>m<60?`${m}m ago`:`${Math.round(m/60)}h ago`,
       usedLeft:(used,left)=>`${used}% Used · ${left}% left`,andMore:n=>`and ${n} more`,updated:a=>`Updated ${a}`,
       leftOf:t=>`${t} left`,
-      todoRing:'To-do',todoTitle:'To-do',todoNone:'Nothing open.',todoLocal:'On this PC',todoRemote:'Workbench',
+      todoRing:'To-do',todoTitle:'To-do',todoAdd:'Add a to-do',todoNone:'Nothing open.',todoLocal:'On this PC',todoRemote:'Workbench',
       todoNoDate:'No date',todoDone:'Done',todoLeft:t=>`${t} left`,todoLate:t=>`${t} late`,
       units:{d:'d',h:'h',m:'m',none:'<1m'}},
   uk:{locale:'uk-UA',title:n=>'Використання '+n,resetting:'Скидання…',resetsIn:m=>`Скидання через ${m} хв`,
@@ -1286,7 +1293,7 @@ const UI={
       ago:m=>m<60?`${m} хв тому`:`${Math.round(m/60)} год тому`,
       usedLeft:(used,left)=>`Використано ${used}% · лишилось ${left}%`,andMore:n=>`і ще ${n}`,updated:a=>`Оновлено ${a}`,
       leftOf:t=>`залишилось ${t}`,
-      todoRing:'Справи',todoTitle:'Справи',todoNone:'Немає відкритих справ.',todoLocal:'На цьому ПК',todoRemote:'Робочий стіл',
+      todoRing:'Справи',todoTitle:'Справи',todoAdd:'Додати справу',todoNone:'Немає відкритих справ.',todoLocal:'На цьому ПК',todoRemote:'Робочий стіл',
       todoNoDate:'Без терміну',todoDone:'Виконано',todoLeft:t=>`лишилось ${t}`,todoLate:t=>`прострочено ${t}`,
       units:{d:'д',h:'год',m:'хв',none:'<1 хв'}},
   ru:{locale:'ru-RU',title:n=>'Использование '+n,resetting:'Сброс…',resetsIn:m=>`Сброс через ${m} мин`,
@@ -1294,7 +1301,7 @@ const UI={
       ago:m=>m<60?`${m} мин назад`:`${Math.round(m/60)} ч назад`,
       usedLeft:(used,left)=>`Использовано ${used}% · осталось ${left}%`,andMore:n=>`и ещё ${n}`,updated:a=>`Обновлено ${a}`,
       leftOf:t=>`осталось ${t}`,
-      todoRing:'Дела',todoTitle:'Дела',todoNone:'Открытых дел нет.',todoLocal:'На этом ПК',todoRemote:'Рабочий стол',
+      todoRing:'Дела',todoTitle:'Дела',todoAdd:'Добавить дело',todoNone:'Открытых дел нет.',todoLocal:'На этом ПК',todoRemote:'Рабочий стол',
       todoNoDate:'Без срока',todoDone:'Готово',todoLeft:t=>`осталось ${t}`,todoLate:t=>`просрочено ${t}`,
       units:{d:'д',h:'ч',m:'мин',none:'<1 мин'}},
   zh:{locale:'zh-CN',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分钟后重置`,
@@ -1302,7 +1309,7 @@ const UI={
       ago:m=>m<60?`${m} 分钟前`:`${Math.round(m/60)} 小时前`,
       usedLeft:(used,left)=>`已用 ${used}% · 剩余 ${left}%`,andMore:n=>`另有 ${n} 个`,updated:a=>`更新于 ${a}`,
       leftOf:t=>`剩余 ${t}`,
-      todoRing:'待办',todoTitle:'待办',todoNone:'没有未完成的待办。',todoLocal:'本机',todoRemote:'工作台',
+      todoRing:'待办',todoTitle:'待办',todoAdd:'添加待办',todoNone:'没有未完成的待办。',todoLocal:'本机',todoRemote:'工作台',
       todoNoDate:'没有截止时间',todoDone:'已完成',todoLeft:t=>`还剩 ${t}`,todoLate:t=>`已逾期 ${t}`,
       units:{d:'天',h:'小时',m:'分钟',none:'不到1分钟'}},
   'zh-Hant':{locale:'zh-TW',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分鐘後重置`,
@@ -1310,7 +1317,7 @@ const UI={
       ago:m=>m<60?`${m} 分鐘前`:`${Math.round(m/60)} 小時前`,
       usedLeft:(used,left)=>`已用 ${used}% · 剩餘 ${left}%`,andMore:n=>`另有 ${n} 個`,updated:a=>`更新於 ${a}`,
       leftOf:t=>`剩餘 ${t}`,
-      todoRing:'待辦',todoTitle:'待辦',todoNone:'沒有未完成的待辦。',todoLocal:'本機',todoRemote:'工作台',
+      todoRing:'待辦',todoTitle:'待辦',todoAdd:'新增待辦',todoNone:'沒有未完成的待辦。',todoLocal:'本機',todoRemote:'工作台',
       todoNoDate:'沒有截止時間',todoDone:'已完成',todoLeft:t=>`還剩 ${t}`,todoLate:t=>`已逾期 ${t}`,
       units:{d:'天',h:'小時',m:'分鐘',none:'不到 1 分鐘'}},
 };
@@ -1706,7 +1713,10 @@ function renderTodoCard(c){
   const u=ui();
   const localRows=todos.rows||[], remoteRows=todos.remoteRows||[];
   let html=`<div class="c-head"><span class="c-title">${esc(u.todoTitle)}</span>`
-    +`<span class="c-count" style="color:${todoTone()}">${todos.open||0}</span></div>`;
+    +`<span class="c-count" style="color:${todoTone()}">${todos.open||0}</span>`
+    // 写一条新待办。卡片只负责「看」和「勾」，输入交给 quick.html —— 这里收不到键盘
+    +`<button class="t-add" id="t-add" title="${esc(u.todoAdd)}" aria-label="${esc(u.todoAdd)}">+</button>`
+    +`</div>`;
   // 逾期和临期各说一句，用工作台那两个已经在别的环上用着的词，不再造新词
   const bits=[];
   if(todos.overdue>0) bits.push(`<span style="color:${CRIT}">${esc(textCopy('Overdue'))} ${todos.overdue}</span>`);
@@ -1961,6 +1971,12 @@ function applyAutoCard(){
 function funcBusy(){ return folded||carrying||dragging||menuOpen; }
 // 勾掉一条。整数往返比本地猜测可靠：这条到底算不算今天到期，Rust 那边和卡片上是同一份判断。
 card.addEventListener('click',e=>{
+  // 加号先判：它不在任何一条待办里，但同样落在卡片上
+  if(e.target.closest('#t-add')){
+    callq('open_quick_add').catch(()=>{});
+    e.stopPropagation();
+    return;
+  }
   const row=e.target.closest('[data-todo]');
   if(!row) return;
   if(row.dataset.readonly) return;          // 工作台那边的条目：那边改，这里只读
