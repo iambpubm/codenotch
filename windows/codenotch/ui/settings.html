@@ -517,7 +517,7 @@ const RU_STATIC = {
   "No open to-dos.":"Открытых дел нет.",
   "Delete":"Удалить",
   "Passphrase":"Пароль",
-  "The workbench's passphrase":"Пароль рабочего стола",
+  "The workbench's passphrase":"Пароль workbench",
   "Remember it":"Запомнить",
   "Forget it":"Забыть",
   "Sync now":"Синхронизировать",
@@ -537,7 +537,7 @@ const RU_STATIC = {
   "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"Пароль, который открывает workbench. Он хранится в диспетчере учётных данных Windows под вашей учётной записью — там его можно посмотреть или удалить. Наружу он не уходит: к шлюзу уходит только зашифрованный файл, который он создаёт.",
   "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"Пока пароль запомнен, дело, которое вы добавили или отметили, уходит через несколько секунд после того, как вы остановились, а каждые пять минут Codenotch перечитывает workbench — так что дело, добавленное с телефона, тоже появится здесь. Перед каждой отправкой в папке данных остаётся копия того, что будет заменено, не больше трёх в день.",
   "Type the passphrase first.":"Сначала введите пароль.",
-  "The passphrase did not open the workbench.":"Этот пароль не открывает рабочий стол.",
+  "The passphrase did not open the workbench.":"Этот пароль не открывает workbench.",
   "No CyberBrain account id is set.":"Не задан id учётной записи CyberBrain.",
   "No date":"Без срока",
   "Overdue by {t}":"просрочено на {t}",
@@ -1420,7 +1420,7 @@ const UK_STATIC = {
   "No open to-dos.":"Відкритих справ немає.",
   "Delete":"Видалити",
   "Passphrase":"Пароль",
-  "The workbench's passphrase":"Пароль робочого столу",
+  "The workbench's passphrase":"Пароль workbench",
   "Remember it":"Запам'ятати",
   "Forget it":"Забути",
   "Sync now":"Синхронізувати",
@@ -1440,7 +1440,7 @@ const UK_STATIC = {
   "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"Пароль, який відкриває workbench. Він зберігається в диспетчері облікових даних Windows під вашим обліковим записом — там його можна подивитися або видалити. Назовні він не йде: до шлюзу надходить лише зашифрований файл, який він створює.",
   "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"Поки пароль запам'ятовано, справа, яку ви додали або позначили, надходить за кілька секунд після того, як ви зупинилися, а кожні п'ять хвилин Codenotch перечитує workbench — тож справа, додана з телефона, теж з'явиться тут. Перед кожним надсиланням у теці даних лишається копія того, що буде замінено, не більше трьох на день.",
   "Type the passphrase first.":"Спершу введіть пароль.",
-  "The passphrase did not open the workbench.":"Цей пароль не відкриває робочий стіл.",
+  "The passphrase did not open the workbench.":"Цей пароль не відкриває workbench.",
   "No CyberBrain account id is set.":"Не задано id облікового запису CyberBrain.",
   "No date":"Без терміну",
   "Overdue by {t}":"прострочено на {t}",
@@ -1616,8 +1616,10 @@ function applyStaticUi(){
     const translated = STATIC_TEXT[uiLang] ? STATIC_TEXT[uiLang][key] : null;
     node.nodeValue = raw.replace(key, translated || key);
   }
-  for(const el of document.querySelectorAll('[aria-label],[title]')){
-    for(const attr of ['aria-label','title']){
+  // 属性也要翻：占位文字是这一页唯一「看不见又必须读」的文案，之前只翻 aria-label 和 title，
+  // 于是八种语言下输入框里都还是英文原句 —— 表里明明有那一条。
+  for(const el of document.querySelectorAll('[aria-label],[title],[placeholder]')){
+    for(const attr of ['aria-label','title','placeholder']){
       if(!el.hasAttribute(attr)) continue;
       const marker = '__en_' + attr.replace('-', '_');
       if(el[marker] === undefined) el[marker] = el.getAttribute(attr);

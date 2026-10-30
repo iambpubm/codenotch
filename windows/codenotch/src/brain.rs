@@ -164,7 +164,7 @@ mod cred {
             Flags: windows::Win32::Security::Credentials::CRED_FLAGS(0),
             Type: CRED_TYPE_GENERIC,
             TargetName: windows::core::PWSTR(name.as_ptr() as *mut u16),
-            Comment: PCWSTR::null(),
+            Comment: windows::core::PWSTR::null(),
             LastWritten: FILETIME::default(),
             CredentialBlobSize: blob.len() as u32,
             CredentialBlob: blob.as_mut_ptr(),
