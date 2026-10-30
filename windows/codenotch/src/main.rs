@@ -29,6 +29,7 @@ mod dropzones;
 mod settings_window;
 mod topmost;
 mod touch;
+mod todos;
 mod updater;
 
 use std::sync::Mutex;
@@ -82,6 +83,10 @@ pub struct AppState {
     /// does not come off this disk: it is fetched from the snapshot the workbench page publishes,
     /// so it can be old and it can be missing. See `cyberbrain.rs`.
     pub brain: Mutex<cyberbrain::Brain>,
+    /// 本机待办清单。数据形状与赛博大脑的 `state.config.todos` 一致，所以两边能对同一份记录
+    /// 说话：这里记一条、推上去，手机上就看得见。`pushed` 标记只活在本机，用来避免
+    /// 「本机这条 + 工作台快照的那个数」把同一条数两次。
+    pub todos: Mutex<todos::Store>,
 }
 
 fn resolved_lang(raw: &str) -> String {
@@ -756,6 +761,345 @@ fn get_activity(state: tauri::State<AppState>) -> Vec<activity::Activity> {
 #[tauri::command]
 fn get_cyberbrain(state: tauri::State<AppState>) -> cyberbrain::Brain {
     state.brain.lock().unwrap().clone()
+}
+
+// ------------------------------------------------------------------ 待办
+
+/// 赛博大脑快照里的明细 → 本地形状，只为显示。
+///
+/// 快照不带给每条记录的 id，所以这里编一个；`remote` 标记让它只读、不存盘、不会被推回去。
+/// 逾期那组是待办那组的子集（都按 `date < today` 挑出来的），按「标题 + 日期」认一次重，
+/// 否则卡片里同一行会站两次。
+fn remote_todos(brain: &cyberbrain::Brain) -> Vec<todos::Todo> {
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let mut out = Vec::new();
+    for item in brain.due.items.iter().chain(brain.over.items.iter()) {
+        let key = (item.title.clone(), item.date.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(todos::Todo {
+            id: format!("remote:{}", out.len()),
+            kind: if item.kind.is_empty() { "todo".into() } else { item.kind.clone() },
+            title: item.title.clone(),
+            date: item.date.clone(),
+            remote: true,
+            ..Default::default()
+        });
+    }
+    out
+}
+
+/// 此刻的待办视图。每次问都按现在重算：时间进度和紧迫度是时间的函数，存下来的数字
+/// 五分钟以后就是错的，而「还剩 2 小时」变成「已逾期」正是这个功能存在的理由。
+fn todo_view(app: &AppHandle) -> todos::View {
+    let st = app.state::<AppState>();
+    let brain = st.brain.lock().unwrap().clone();
+    let (items, priority_first) = {
+        let store = st.todos.lock().unwrap();
+        let cfg = st.cfg.lock().unwrap();
+        (store.items.clone(), cfg.todo_sort == "priority")
+    };
+    // 没配 uid（status none）就是没有远程那半，0 是实话；读失败时保留上一次的读数，
+    // 和三个计数环的口径一致 —— 「查不到」不等于「没有」。
+    let (count, overdue) = if brain.status == "none" {
+        (0, 0)
+    } else {
+        (brain.due.count, brain.over.count)
+    };
+    todos::view(&items, &remote_todos(&brain), count, overdue, todos::now(), priority_first)
+}
+
+fn emit_todos(app: &AppHandle, view: &todos::View) {
+    let _ = app.emit("todos", view);
+}
+
+/// 本地改动的公共收尾：写盘、重新算、广播。调用方必须先放掉 store 的锁，
+/// 否则 `todo_view` 会再拿一次同一把锁，当场卡死。
+fn after_todo_change(app: &AppHandle) -> Result<todos::View, String> {
+    let view = todo_view(app);
+    emit_todos(app, &view);
+    Ok(view)
+}
+
+#[tauri::command]
+fn get_todos(app: AppHandle) -> todos::View {
+    todo_view(&app)
+}
+
+/// 完整记录，给设置页的编辑和「推送到赛博大脑」用：`get_todos` 返回的是显示用的行，
+/// 没有 kind、cat 这些推上去必需的字段。
+#[tauri::command]
+fn get_todos_raw(state: tauri::State<AppState>) -> Vec<todos::Todo> {
+    state.todos.lock().unwrap().items.clone()
+}
+
+fn stamp_now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+#[tauri::command]
+fn add_todo(
+    app: AppHandle,
+    title: String,
+    date: String,
+    time: String,
+    level: String,
+    note: String,
+) -> Result<todos::View, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    let now = stamp_now();
+    let item = todos::Todo {
+        id: todos::new_id(),
+        kind: "todo".into(),
+        cat: "work".into(),
+        title,
+        note: note.trim().to_string(),
+        date: date.trim().to_string(),
+        time: time.trim().to_string(),
+        level,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+        // 记下来的这一刻就是周期的起点，时间进度从这里开始走
+        deadline_set_at: if date.trim().is_empty() { String::new() } else { now },
+        ..Default::default()
+    };
+    {
+        let st = app.state::<AppState>();
+        let mut store = st.todos.lock().unwrap();
+        store.items.push(item);
+        todos::save(&store).map_err(|e| format!("保存失败：{e}"))?;
+    }
+    after_todo_change(&app)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn update_todo(
+    app: AppHandle,
+    id: String,
+    title: String,
+    date: String,
+    time: String,
+    level: String,
+    note: String,
+) -> Result<todos::View, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    {
+        let st = app.state::<AppState>();
+        let mut store = st.todos.lock().unwrap();
+        let item = store
+            .items
+            .iter_mut()
+            .find(|t| t.id == id)
+            .ok_or_else(|| "没有这条待办".to_string())?;
+        // 截止时间真的变了才重置周期的起点：改标题、改备注不该让时间进度回到 0，
+        // 那会让一条拖了三天的事看起来像刚建的。
+        let moved = item.date != date.trim() || item.time != time.trim();
+        item.title = title;
+        item.note = note.trim().to_string();
+        item.date = date.trim().to_string();
+        item.time = time.trim().to_string();
+        item.level = level;
+        item.updated_at = stamp_now();
+        if moved {
+            item.deadline_set_at = item.updated_at.clone();
+        }
+        todos::save(&store).map_err(|e| format!("保存失败：{e}"))?;
+    }
+    after_todo_change(&app)
+}
+
+#[tauri::command]
+fn toggle_todo(app: AppHandle, id: String) -> Result<todos::View, String> {
+    {
+        let st = app.state::<AppState>();
+        let mut store = st.todos.lock().unwrap();
+        let item = store
+            .items
+            .iter_mut()
+            .find(|t| t.id == id)
+            .ok_or_else(|| "没有这条待办".to_string())?;
+        item.done = !item.done;
+        item.updated_at = stamp_now();
+        todos::save(&store).map_err(|e| format!("保存失败：{e}"))?;
+    }
+    after_todo_change(&app)
+}
+
+/// 软删除：留一条 `deleted: true` 的记录。硬删的条目没法告诉云端「这条没了」，
+/// 下次拉取就会复活 —— 工作台自己也因为这个理由改了软删除。
+#[tauri::command]
+fn delete_todo(app: AppHandle, id: String) -> Result<todos::View, String> {
+    {
+        let st = app.state::<AppState>();
+        let mut store = st.todos.lock().unwrap();
+        let item = store
+            .items
+            .iter_mut()
+            .find(|t| t.id == id)
+            .ok_or_else(|| "没有这条待办".to_string())?;
+        item.deleted = true;
+        item.updated_at = stamp_now();
+        todos::save(&store).map_err(|e| format!("保存失败：{e}"))?;
+    }
+    after_todo_change(&app)
+}
+
+#[tauri::command]
+fn set_todo_sort(app: AppHandle, sort: String) -> Result<todos::View, String> {
+    {
+        let st = app.state::<AppState>();
+        let mut cfg = st.cfg.lock().unwrap();
+        cfg.todo_sort = config::todo_sort_or_deadline(&sort);
+        config::save(&cfg);
+    }
+    after_todo_change(&app)
+}
+
+/// 那个「临近截止自己撑开」的开关。关掉之后环照样变色、卡片照样在悬停时打开，
+/// 只是不再自己冒出来 —— 有人在写代码的时候，这是唯一该有的默认礼貌。
+#[tauri::command]
+fn set_todo_auto(app: AppHandle, on: bool) -> UiFlags {
+    let flags = {
+        let st = app.state::<AppState>();
+        let mut cfg = st.cfg.lock().unwrap();
+        cfg.todo_auto_open = on;
+        config::save(&cfg);
+        ui_flags(&cfg)
+    };
+    let _ = app.emit("ui_flags", flags.clone());
+    flags
+}
+
+/// 推送成功之后调用：这些条目已经上了云，工作台的快照里会有它们，本机不该再额外加一遍。
+#[tauri::command]
+fn mark_todos_pushed(app: AppHandle) -> todos::View {
+    {
+        let st = app.state::<AppState>();
+        let mut store = st.todos.lock().unwrap();
+        for item in store.items.iter_mut().filter(|t| !t.deleted) {
+            item.pushed = true;
+        }
+        let _ = todos::save(&store);
+    }
+    let view = todo_view(&app);
+    emit_todos(&app, &view);
+    view
+}
+
+/// 待办推送的两条通道：解密、加密全在页面上用 WebCrypto 做，Rust 只把字节送到网关。
+///
+/// 这样口令一个字都不进 Rust、不进盘，也不会出现在这个仓库里 —— 而云端那份 config 是
+/// 端到端加密的（`{__enc:1, iv, ct}`），没有口令谁也读不了，包括本程序。
+const BRAIN_GATEWAY: &str =
+    "https://sonnet-ai-d9glodhldc474eb0c-1318171231.ap-shanghai.app.tcloudbase.com/api";
+const BRAIN_UA: &str = "Codenotch/1.18 (Windows)";
+
+fn brain_uid(state: &tauri::State<AppState>) -> Result<String, String> {
+    let uid = state.cfg.lock().unwrap().brain_uid.trim().to_string();
+    if uid.is_empty() {
+        return Err("还没有填赛博大脑账号 ID（设置 → 账户）".into());
+    }
+    Ok(uid)
+}
+
+fn brain_post(body: &str) -> Result<serde_json::Value, String> {
+    // 函数把 body 当纯文本读，所以 content type 写 text，和页面里的 fetch 一致
+    let response = ureq::post(BRAIN_GATEWAY)
+        .timeout(std::time::Duration::from_secs(30))
+        .set("Content-Type", "text/plain;charset=UTF-8")
+        .set("Accept", "application/json")
+        .set("User-Agent", BRAIN_UA)
+        .send_string(body)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("赛博大脑网关回了 {code}"),
+            other => other.to_string(),
+        })?;
+    let value: serde_json::Value = response.into_json().map_err(|e| e.to_string())?;
+    if value.get("code").and_then(|c| c.as_i64()) == Some(0) || value.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+        Ok(value)
+    } else {
+        Err(value
+            .get("error")
+            .or_else(|| value.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("赛博大脑没有接受这次请求")
+            .to_string())
+    }
+}
+
+/// 云端那份 config 的密文包装，原样交给页面去解。
+#[tauri::command]
+fn brain_pull_config(state: tauri::State<AppState>) -> Result<serde_json::Value, String> {
+    let uid = brain_uid(&state)?;
+    let body = serde_json::json!({ "op": "pull", "tbl": "config", "uid": uid }).to_string();
+    let reply = brain_post(&body)?;
+    let data = reply.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let first = match data {
+        serde_json::Value::Array(rows) => rows.into_iter().next().unwrap_or(serde_json::Value::Null),
+        other => other,
+    };
+    // 页面要的是那层包装：单例 blob 存在 `{ cfg: {__enc, iv, ct} }` 里
+    Ok(first.get("cfg").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+/// 页面加密好的一整份 config 推上去。整包覆盖是工作台自己的做法（它的 `push` 也是先拉
+/// 云端、解密、按 id 合并、再加密上传），所以这里只负责把密文送到，不碰内容。
+///
+/// **推送前把云端现在那份原样存一份。** 这是整个集成里唯一会真正改动工作台数据的动作，
+/// 而它是一次覆盖；万一页面那边合并错了，这一份密文就是能原样推回去的东西。存的是密文，
+/// 所以留在这里也不比云端更暴露 —— 没有口令，它也读不出来。
+#[tauri::command]
+fn brain_push_config(state: tauri::State<AppState>, iv: String, ct: String) -> Result<(), String> {
+    let uid = brain_uid(&state)?;
+    backup_cloud_config(&uid);
+    let body = serde_json::json!({
+        "op": "push",
+        "tbl": "config",
+        "uid": uid,
+        "rows": [{ "cfg": { "__enc": 1, "iv": iv, "ct": ct } }]
+    })
+    .to_string();
+    brain_post(&body)?;
+    Ok(())
+}
+
+/// 覆盖前的旧版留档，最多 20 份，多的按文件名（时间戳）删最旧的。
+fn backup_cloud_config(uid: &str) {
+    let body = serde_json::json!({ "op": "pull", "tbl": "config", "uid": uid }).to_string();
+    let Ok(reply) = brain_post(&body) else { return };
+    // 空答复说明云端还没有这份配置，那就没有东西可以被覆盖
+    if reply.get("data").map_or(true, |d| d.is_null()) {
+        return;
+    }
+    let dir = config::config_path().with_file_name("brain-backup");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
+    let _ = std::fs::write(dir.join(format!("config-{stamp}.json")), reply.to_string());
+    let mut names: Vec<String> = match std::fs::read_dir(&dir) {
+        Ok(it) => it
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.starts_with("config-") && n.ends_with(".json"))
+            .collect(),
+        // 读不出来就当作没有旧档可删：留档本身已经写成功了，清理失败不该让它看起来没写成
+        Err(_) => Vec::new(),
+    };
+    names.sort();
+    while names.len() > 20 {
+        let oldest = names.remove(0);
+        let _ = std::fs::remove_file(dir.join(oldest));
+    }
 }
 
 /// The workbench account id. Read back so Settings can show whether one is set and how long it is;
@@ -1661,10 +2005,17 @@ struct UiFlags {
     notch_visible: bool,
     notch_on_hover: bool,
     tray_visible: bool,
+    /// 待办临近截止时，卡片自己撑开催你。页面要它来决定「要不要在不悬停的时候也展开」。
+    todo_auto_open: bool,
 }
 
 fn ui_flags(c: &config::Config) -> UiFlags {
-    UiFlags { notch_visible: c.notch_visible, notch_on_hover: c.notch_on_hover, tray_visible: c.tray_visible }
+    UiFlags {
+        notch_visible: c.notch_visible,
+        notch_on_hover: c.notch_on_hover,
+        tray_visible: c.tray_visible,
+        todo_auto_open: c.todo_auto_open,
+    }
 }
 
 #[tauri::command]
@@ -2109,6 +2460,7 @@ fn main() {
             glyphs: Mutex::new(Default::default()),
             activity: Mutex::new(Vec::new()),
             brain: Mutex::new(brain0),
+            todos: Mutex::new(todos::load()),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -2125,6 +2477,17 @@ fn main() {
             get_glyphs,
             get_activity,
             get_cyberbrain,
+            get_todos,
+            get_todos_raw,
+            add_todo,
+            update_todo,
+            toggle_todo,
+            delete_todo,
+            set_todo_sort,
+            set_todo_auto,
+            mark_todos_pushed,
+            brain_pull_config,
+            brain_push_config,
             get_brain_uid,
             set_brain_uid,
             open_data_dir,

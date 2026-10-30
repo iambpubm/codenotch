@@ -36,7 +36,8 @@ Providers that are not installed simply do not get a cell. A config saved with t
 | **OpenCode** | OpenCode's own sign-in, read only: the `opencode-go` key in `~/.local/share/opencode/auth.json` → `opencode.ai/zen/go/v1/usage`, or — since OpenCode 1.18 — the OAuth sign-in in `opencode.db` (`credential` table) → `opencode.ai/inference/go/v1/usage` | The Go plan's 5-hour, weekly and monthly windows. A sign-in without a Go plan shows "No OpenCode Go subscription" instead of a ring; Zen pay-as-you-go credit has no balance or usage API, so it is not shown. |
 | **z.ai (GLM)** | The existing Z.AI tool credentials — the GLM Coding Plan key in the environment, in the CLI's config, or in a `~/.claude/settings.json` that points `ANTHROPIC_BASE_URL` at a Z.ai console | The plan's session / weekly windows. |
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
-| **CyberBrain** | One aggregate snapshot that a CyberBrain workbench publishes itself, read over its cloud gateway for the account id set in Settings | Todos, overdue items and delivery warnings, as three rings below a hairline separator. They are business counts, not allowances, so nothing is filled in: the ring frames the number and the colour carries the judgement, and the hover card lists the items behind it. The workbench rewrites the snapshot only while it is open, so a reading can be hours old and the card says when it was pushed. Nothing else about the workbench is readable from here. |
+| **CyberBrain** | One aggregate snapshot that a CyberBrain workbench publishes itself, read over its cloud gateway for the account id set in Settings | Overdue items and delivery warnings as two rings below a hairline separator. They are business counts, not allowances, so nothing is filled in: the ring frames the number and the colour carries the judgement, and the hover card lists the items behind it. The workbench rewrites the snapshot only while it is open, so a reading can be hours old and the card says when it was pushed. Nothing else about the workbench is readable from here. |
+| **To-do** | A local list in the workbench's record shape, plus the items in its snapshot | One ring for everything still open, with its arc showing how close the nearest deadline is. The card lists the items, ticks them off on click, and opens itself as a deadline nears — taller the closer it gets. New items, the sort order and pushing them up to CyberBrain are in Settings. |
 
 The working-state arc (the thin spinning line inside a ring, the amber pulse when something
 wants your input, and the green pulse when a run has just finished) is drawn for every provider
@@ -334,13 +335,14 @@ shows an error or the last reading marked stale. Codenotch does not automate sig
 
 ### CyberBrain: the workbench's counts
 
-Three counts from a **CyberBrain workbench** — todos, overdue items and delivery warnings — drawn
-as three rings after a hairline separator, in the same pill as the providers. They are counts rather
-than allowances, so no arc is filled in: the ring frames the number, and colour carries the whole
-message — dim at zero, white for something waiting, red for something already late, amber for
-something about to be. Zero is never hidden, because "0 overdue" is an answer and often the reason
-to look. Hovering a ring opens a card listing what is actually behind the number: title, date and a
-short tag, ten rows at most, with *and N more* when the list was longer than that.
+Two counts from a **CyberBrain workbench** — overdue items and delivery warnings — drawn as rings
+after a hairline separator, in the same pill as the providers, next to the to-do ring described
+below. They are counts rather than allowances, so no arc is filled in: the ring frames the number,
+and colour carries the whole message — dim at zero, white for something waiting, red for something
+already late, amber for something about to be. Zero is never hidden, because "0 overdue" is an
+answer and often the reason to look. Hovering a ring opens a card listing what is actually behind
+the number: title, date and a short tag, ten rows at most, with *and N more* when the list was
+longer than that.
 
 Unlike every other cell, this data is not on this machine and cannot be computed from anything that
 is. The workbench is a PWA whose records are end-to-end encrypted, so the only readable thing is the
@@ -360,7 +362,8 @@ it cannot decrypt anything and does not try. Three consequences, all deliberate:
   workbench once so that it starts publishing them.
 
 **Settings → Accounts → CyberBrain** is where the account id goes. There is nothing to detect — no
-file to find and no process to look for — so with no id the three rings are simply not drawn. The id
+file to find and no process to look for — so with no id the two workbench rings are simply not drawn
+(the to-do ring stays: a local list is still a list). The id
 is kept in `%APPDATA%\codenotch\config.json` and never in this repository, on purpose: the
 workbench's `getStats` op does not authenticate the caller, so knowing the id is enough to read that
 snapshot, details included. Treat it as the password to those numbers. It is stored in the clear —
@@ -381,6 +384,49 @@ workbench computes `days` — signed calendar days for todos and follow-ups, wor
 warnings — and this build passes it through instead of recomputing a second opinion that could
 disagree with the number printed beside it. An entry dated before this feature simply has no
 `detail`, and the reading survives that: counts kept, lists empty.
+
+### To-dos: one list, and a card that grows
+
+The first ring is a to-do list this machine keeps, in the workbench's own record shape, so the two
+can be the same list instead of two lists that disagree. The number on the ring is everything still
+open: the workbench's count plus the items here that have not been pushed yet. Items that have been
+pushed are marked so, or the same to-do would be counted twice — once by the snapshot, once by this
+file. The card behind the ring lists the local items (click one to tick it off) and, below them, the
+ones only the snapshot knows about, which are read-only here because the workbench is where they
+came from.
+
+Authoring is in **Settings → To-do**, not on the notch: the notch window is `focusable: false`, so
+no keystroke ever reaches it, and a text field there would silently swallow typing. Ticking off is a
+click, and that is the only edit the notch accepts.
+
+Three rules are carried over from [CornerTodo](https://github.com/nff825/CornerTodo), because each
+solves a problem that is easy to lose in a rewrite:
+
+- **Time progress** is the elapsed fraction of each item's own span, measured from the moment its
+  deadline was set (or its creation, for records that never had one). It is not completion — it says
+  how much of the time you had is already gone.
+- **Urgency** only moves in the last 24 hours, and moves quadratically, so the last hour is steeper
+  than the twenty-third. A deadline five minutes away grows inside its own five minutes rather than
+  sitting at zero because the 24-hour window has barely started.
+- **Two orders**: deadline first (the default) or priority first, which is then broken by deadline.
+  Undated items come last in both.
+
+The card opens by itself as a deadline nears, and opens taller the closer it gets: the top three
+urgencies decide the height, so ten items do not make a card ten times as tall. It stays shut while
+the notch is being dragged, while the folded bar is in use, while a menu is open, and whenever the
+pointer is over the notch itself. The switch is in Settings → To-do, and it is on by default.
+
+A date with no time stays valid until the end of that day — the workbench's `todoStatus` reads a
+to-do as overdue only once the date has passed, and two readers of one list must not disagree about
+what "due today" means. Deleting is a soft flag rather than a removal, so a deletion can travel to
+the other side instead of the record coming back on the next pull.
+
+**Push to CyberBrain** merges local items into the workbench's config by id, newer wins, then
+uploads the whole file the way the workbench itself does. That file is end-to-end encrypted, so the
+passphrase is typed in Settings and used there — in the page's WebCrypto, never in the Rust side,
+and never written to disk. The ciphertext that would be overwritten is kept first, up to twenty
+copies, under `%APPDATA%\codenotch\brain-backup\`; it is ciphertext, so leaving it there is no more
+exposure than the cloud itself. The local list lives in `%APPDATA%\codenotch\todos.json`.
 
 ## Install / build
 

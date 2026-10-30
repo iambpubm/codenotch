@@ -123,6 +123,13 @@ pub struct Config {
     /// compiled into a public repository would hand all of that to anyone who reads the source.
     #[serde(default)]
     pub brain_uid: String,
+    /// 待办清单怎么排：`deadline`（默认，越早截止越前）或 `priority`（高→中→低，同级再按截止）。
+    #[serde(default = "default_todo_sort")]
+    pub todo_sort: String,
+    /// 待办临近截止时，卡片自己撑开催你 —— CornerTodo 那个「随截止时间扩大」，默认开。
+    /// 关掉之后环照样变色，只是不会自己弹出来。
+    #[serde(default = "yes")]
+    pub todo_auto_open: bool,
 }
 
 fn default_notch_y() -> f64 {
@@ -248,6 +255,17 @@ fn default_port() -> u16 {
 fn default_lang() -> String {
     "auto".into()
 }
+fn default_todo_sort() -> String {
+    "deadline".into()
+}
+
+/// 只认两种排序；写坏的值回到默认，而不是让整份配置读不出来。
+pub fn todo_sort_or_deadline(value: &str) -> String {
+    match value {
+        "priority" => "priority".to_string(),
+        _ => default_todo_sort(),
+    }
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -278,6 +296,8 @@ impl Default for Config {
             show_move_handle: true,
             adaptive_pill: false,
             brain_uid: String::new(),
+            todo_sort: default_todo_sort(),
+            todo_auto_open: true,
         }
     }
 }
@@ -327,6 +347,7 @@ pub fn load() -> Config {
     cfg.weekly_ring = weekly_ring_or_off(&cfg.weekly_ring);
     cfg.color_transition = color_transition_or_step(&cfg.color_transition);
     cfg.theme = theme_or_system(&cfg.theme);
+    cfg.todo_sort = todo_sort_or_deadline(&cfg.todo_sort);
     cfg
 }
 
@@ -421,7 +442,7 @@ pub fn save(cfg: &Config) {
 mod tests {
     use super::{
         carry_shared_position, color_transition_or_step, keep_open_on_upgrade, snap_scale, theme_or_system,
-        weekly_ring_or_off, Config,
+        todo_sort_or_deadline, weekly_ring_or_off, Config,
     };
 
     /// Show on hover is the Mac's default, so a fresh install gets it — but an update must not start
@@ -539,5 +560,24 @@ mod tests {
             saved.get("theme").and_then(|value| value.as_str()),
             Some("light")
         );
+    }
+
+    /// 待办是新加的东西：没有这两个字段的旧配置读进来，要得到「按截止时间」和「默认会自己撑开」。
+    #[test]
+    fn an_older_config_gets_the_todo_defaults() {
+        let cfg: Config = serde_json::from_str(r#"{"notch_visible":false}"#).unwrap();
+        assert_eq!(cfg.todo_sort, "deadline", "旧配置没有排序：按截止时间");
+        assert!(cfg.todo_auto_open, "而且默认会自己撑开，这是他选的那个行为");
+        assert!(!cfg.notch_visible, "其余字段照旧");
+    }
+
+    /// 排序只认两种值。写坏的回到默认，而不是让整份配置读不出来 ——
+    /// 一个手滑的字符串不该把别人的界面设置一起清掉。
+    #[test]
+    fn only_the_two_sort_orders_are_kept() {
+        assert_eq!(todo_sort_or_deadline("priority"), "priority");
+        assert_eq!(todo_sort_or_deadline("deadline"), "deadline");
+        assert_eq!(todo_sort_or_deadline("Priority"), "deadline");
+        assert_eq!(todo_sort_or_deadline(""), "deadline");
     }
 }

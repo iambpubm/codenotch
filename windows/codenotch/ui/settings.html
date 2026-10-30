@@ -55,6 +55,7 @@
   .b-indigo{background:linear-gradient(#8784ff,#5856d6)}
   .b-gray{background:linear-gradient(#a6a6ab,#727277)}
   .b-red{background:linear-gradient(#ff6d62,#dd3328)}
+  .b-green{background:linear-gradient(#4ad07d,#1a9b4e)}
 
   /* ---- pane ---- */
   #pane{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -141,6 +142,7 @@
     <div class="band" data-tauri-drag-region></div>
     <button class="row" id="tab-accounts" role="tab" aria-controls="pane-accounts" aria-selected="false" tabindex="-1"><span class="badge b-blue"><svg viewBox="0 0 12 12"><circle cx="6" cy="4" r="2.4"/><path d="M1.5 11.2c.4-2.5 2.3-3.9 4.5-3.9s4.1 1.4 4.5 3.9z"/></svg></span><span>Accounts</span></button>
     <button class="row" id="tab-appearance" role="tab" aria-controls="pane-appearance" aria-selected="false" tabindex="-1"><span class="badge b-indigo"><svg viewBox="0 0 12 12"><path d="M10 .9a.8.8 0 0 1 1.1 1.1L6.4 6.7 5.3 5.6zM4.6 6.3l1.1 1.1c.2 1.9-1.9 3.6-4.7 3.1.9-.4 1.2-1 1.3-1.8.1-1.3 1.1-2.3 2.3-2.4z"/></svg></span><span>Appearance</span></button>
+    <button class="row" id="tab-todos" role="tab" aria-controls="pane-todos" aria-selected="false" tabindex="-1"><span class="badge b-green"><svg viewBox="0 0 12 12"><path d="M1.6 6.3l2.3 2.4 6-6.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></span><span>To-do</span></button>
     <button class="row" id="tab-general" role="tab" aria-controls="pane-general" aria-selected="false" tabindex="-1"><span class="badge b-gray"><svg viewBox="0 0 12 12"><path fill-rule="evenodd" d="M5.1.6h1.8l.3 1.5 1.1.5 1.3-.8 1.3 1.3-.8 1.3.5 1.1 1.5.3v1.8l-1.5.3-.5 1.1.8 1.3-1.3 1.3-1.3-.8-1.1.5-.3 1.5H5.1l-.3-1.5-1.1-.5-1.3.8-1.3-1.3.8-1.3-.5-1.1L.6 6.9V5.1l1.5-.3.5-1.1-.8-1.3 1.3-1.3 1.3.8 1.1-.5zM6 4.1a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8z"/></svg></span><span>General</span></button>
     <div class="grow" data-tauri-drag-region></div>
     <button class="row" id="quit"><span class="badge b-red"><svg viewBox="0 0 12 12"><path d="M6 1.2v4.3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.4 3.1a3.9 3.9 0 1 0 5.2 0" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></span><span>Quit Codenotch</span></button>
@@ -212,6 +214,34 @@
         </div>
       </section>
 
+      <section class="pane" id="pane-todos" role="tabpanel" aria-labelledby="tab-todos" hidden>
+        <div class="sec">The list</div>
+        <div class="group">
+          <div class="item"><span>Sort</span><span class="seg" id="seg-sort"><button data-v="deadline">Due first</button><button data-v="priority">Priority first</button></span></div>
+          <div class="item"><span>Open the card as a deadline nears</span><button class="switch" id="sw-auto" role="switch" aria-checked="true" aria-label="Open the card as a deadline nears"></button></div>
+          <div class="item cap">In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.</div>
+        </div>
+
+        <div class="sec">Add</div>
+        <div class="group">
+          <div class="item"><input id="td-title" class="cred" placeholder="What needs doing?" aria-label="What needs doing?"></div>
+          <div class="item"><span>Due</span><input id="td-date" class="cred" type="date" aria-label="Due date"></div>
+          <div class="item"><span>Priority</span><span class="seg" id="seg-level"><button data-v="">None</button><button data-v="高">High</button><button data-v="中">Medium</button><button data-v="低">Low</button></span></div>
+          <div class="item"><span id="td-add-note"></span><button class="btn" id="td-add">Add</button></div>
+        </div>
+
+        <div class="sec">On the notch</div>
+        <div class="group" id="td-list" data-dynamic></div>
+
+        <div class="sec">CyberBrain</div>
+        <div class="group">
+          <div class="item"><span>Passphrase</span><input id="td-pass" class="cred" type="password" placeholder="The workbench's passphrase" aria-label="Passphrase"></div>
+          <div class="item cap">The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.</div>
+          <div class="item"><button class="btn" id="td-push">Push to CyberBrain</button></div>
+          <div class="item cap" id="td-push-note"></div>
+        </div>
+      </section>
+
       <section class="pane" id="pane-general" role="tabpanel" aria-labelledby="tab-general" hidden>
         <div class="group">
           <div class="item"><span>Touch screen</span><button class="switch" id="sw-touch" role="switch" aria-checked="false" aria-label="Touch screen"></button></div>
@@ -268,6 +298,38 @@ function esc(s){
    Windows page keep the Russian #141 gave them. `applyStaticUi()` matches a text node exactly, so
    rewording any string here means changing its key in every table. */
 const PT_BR_STATIC = {
+  "To-do":"A fazer",
+  "The list":"Lista",
+  "Sort":"Ordem",
+  "Due first":"Prazo primeiro",
+  "Priority first":"Prioridade primeiro",
+  "Open the card as a deadline nears":"Abrir o cartão quando o prazo se aproxima",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"Nas últimas 24 horas antes do prazo o cartão de tarefas abre sozinho, e abre mais alto quanto mais perto o prazo fica. Ele não se mexe enquanto você arrasta a barra ou com um menu aberto.",
+  "Add":"Adicionar",
+  "What needs doing?":"O que precisa ser feito?",
+  "Due":"Prazo",
+  "Priority":"Prioridade",
+  "None":"Nenhuma",
+  "High":"Alta",
+  "Medium":"Média",
+  "Low":"Baixa",
+  "A to-do needs a title.":"Uma tarefa precisa de um título.",
+  "On the notch":"Na barra",
+  "No open to-dos.":"Nada em aberto.",
+  "Delete":"Excluir",
+  "Passphrase":"Senha",
+  "The workbench's passphrase":"A senha do workbench",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"Os registros do workbench são criptografados antes de sair do navegador. Para acrescentar uma tarefa, o Codenotch precisa abrir esse mesmo arquivo, então esta é a senha que você digita lá. Ela é usada apenas nesta janela: não é gravada em disco e não sobrevive ao fechar as configurações.",
+  "Push to CyberBrain":"Enviar para o CyberBrain",
+  "Type the passphrase first.":"Digite a senha primeiro.",
+  "Reading the workbench…":"Lendo o workbench…",
+  "The passphrase did not open the workbench.":"Essa senha não abre o workbench.",
+  "Pushed. The workbench will show it after its next sync.":"Enviado. O workbench mostrará depois da próxima sincronização.",
+  "No CyberBrain account id is set.":"Nenhum id de conta do CyberBrain foi definido.",
+  "This window cannot encrypt, so nothing was sent.":"Esta janela não consegue criptografar, então nada foi enviado.",
+  "No date":"Sem prazo",
+  "Overdue by {t}":"{t} em atraso",
+  "Due in {t}":"faltam {t}",
   'Touch screen':'Tela de toque',
   'No touch screen was found on this PC.':'Nenhuma tela de toque foi encontrada neste PC.',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'Desliga a tela de toque no nível do dispositivo — o mesmo interruptor «Desativar dispositivo» do Gerenciador de Dispositivos — para que a palma apoiada no vidro não mova o ponteiro. O Windows pede aprovação de administrador uma vez, na primeira troca; depois disso, alterna em silêncio.',
@@ -414,6 +476,38 @@ const PT_BR_STATIC = {
   'Saved':'Salvo'
 };
 const RU_STATIC = {
+  "To-do":"Дела",
+  "The list":"Список",
+  "Sort":"Сортировка",
+  "Due first":"Сначала срок",
+  "Priority first":"Сначала приоритет",
+  "Open the card as a deadline nears":"Открывать карточку при приближении срока",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"В последние 24 часа перед сроком карточка дел открывается сама и тем выше, чем ближе срок. Она не двигается, пока вы тянете панель или открыто меню.",
+  "Add":"Добавить",
+  "What needs doing?":"Что нужно сделать?",
+  "Due":"Срок",
+  "Priority":"Приоритет",
+  "None":"Нет",
+  "High":"Высокий",
+  "Medium":"Средний",
+  "Low":"Низкий",
+  "A to-do needs a title.":"У дела должно быть название.",
+  "On the notch":"На панели",
+  "No open to-dos.":"Открытых дел нет.",
+  "Delete":"Удалить",
+  "Passphrase":"Пароль",
+  "The workbench's passphrase":"Пароль рабочего стола",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"Записи рабочего стола шифруются до того, как покинут браузер. Чтобы добавить туда дело, Codenotch должен открыть тот же файл, поэтому здесь нужен пароль, который вы вводите там. Он используется только в этом окне: не пишется на диск и исчезает при закрытии настроек.",
+  "Push to CyberBrain":"Отправить в CyberBrain",
+  "Type the passphrase first.":"Сначала введите пароль.",
+  "Reading the workbench…":"Читаю рабочий стол…",
+  "The passphrase did not open the workbench.":"Этот пароль не открывает рабочий стол.",
+  "Pushed. The workbench will show it after its next sync.":"Отправлено. Рабочий стол покажет это после следующей синхронизации.",
+  "No CyberBrain account id is set.":"Не задан id учётной записи CyberBrain.",
+  "This window cannot encrypt, so nothing was sent.":"Это окно не может шифровать, поэтому ничего не отправлено.",
+  "No date":"Без срока",
+  "Overdue by {t}":"просрочено на {t}",
+  "Due in {t}":"через {t}",
   'Touch screen':'Сенсорный экран',
   'No touch screen was found on this PC.':'На этом компьютере сенсорный экран не найден.',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'Выключает сенсорный экран на уровне устройства — тот же переключатель «Отключить устройство» в Диспетчере устройств, чтобы ладонь на стекле не сдвигала указатель. Windows запрашивает права администратора один раз, при первом переключении; дальше переключает без запросов.',
@@ -527,6 +621,38 @@ const RU_STATIC = {
   'App designed and developed by':'Приложение разработал', 'Saved':'Сохранено'
 };
 const ZH_STATIC = {
+  "To-do":"待办",
+  "The list":"清单",
+  "Sort":"排序",
+  "Due first":"按截止时间",
+  "Priority first":"按优先级",
+  "Open the card as a deadline nears":"临近截止时自动展开卡片",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"截止前最后 24 小时内，待办卡片会自己展开，而且越接近截止长得越高。拖动条子或开着菜单时它不会动。",
+  "Add":"添加",
+  "What needs doing?":"要做什么？",
+  "Due":"截止",
+  "Priority":"优先级",
+  "None":"无",
+  "High":"高",
+  "Medium":"中",
+  "Low":"低",
+  "A to-do needs a title.":"待办总得有个标题。",
+  "On the notch":"条子上",
+  "No open to-dos.":"没有未完成的待办。",
+  "Delete":"删除",
+  "Passphrase":"口令",
+  "The workbench's passphrase":"工作台的口令",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"工作台的记录在离开浏览器之前就加密了。要往里面加一条待办，Codenotch 必须先解开同一份文件，所以这里填你在工作台上输的那个口令。它只用在这个窗口里：不写盘，关掉设置就没了。",
+  "Push to CyberBrain":"推送到赛博大脑",
+  "Type the passphrase first.":"先填口令。",
+  "Reading the workbench…":"正在读取工作台…",
+  "The passphrase did not open the workbench.":"这个口令打不开工作台。",
+  "Pushed. The workbench will show it after its next sync.":"已推送。工作台下次同步后就能看到。",
+  "No CyberBrain account id is set.":"还没有填赛博大脑账号 ID（账户页）。",
+  "This window cannot encrypt, so nothing was sent.":"这个窗口无法加密，所以什么都没发出去。",
+  "No date":"没有截止时间",
+  "Overdue by {t}":"已逾期 {t}",
+  "Due in {t}":"还剩 {t}",
   'Touch screen':'触摸屏',
   'No touch screen was found on this PC.':'这台电脑上没有找到触摸屏。',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'在设备层面关掉触摸屏，也就是「设备管理器 → 禁用设备」那个开关：玻璃上放着的手掌不会再把指针带走。第一次切换时 Windows 会请求一次管理员确认，之后就静默切换。',
@@ -671,6 +797,38 @@ const ZH_STATIC = {
   'this screen cannot be remembered by name':'这块屏幕无法按名称记住'
 };
 const ZH_HANT_STATIC = {
+  "To-do":"待辦",
+  "The list":"清單",
+  "Sort":"排序",
+  "Due first":"按截止時間",
+  "Priority first":"按優先級",
+  "Open the card as a deadline nears":"臨近截止時自動展開卡片",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"截止前最後 24 小時內，待辦卡片會自己展開，而且越接近截止長得越高。拖動條子或開著選單時它不會動。",
+  "Add":"新增",
+  "What needs doing?":"要做什麼？",
+  "Due":"截止",
+  "Priority":"優先級",
+  "None":"無",
+  "High":"高",
+  "Medium":"中",
+  "Low":"低",
+  "A to-do needs a title.":"待辦總要有個標題。",
+  "On the notch":"條子上",
+  "No open to-dos.":"沒有未完成的待辦。",
+  "Delete":"刪除",
+  "Passphrase":"口令",
+  "The workbench's passphrase":"工作台的口令",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"工作台的記錄在離開瀏覽器之前就加密了。要往裡面加一條待辦，Codenotch 必須先解開同一份檔案，所以這裡填你在工作台上輸入的那個口令。它只在這個視窗裡用：不寫盤，關掉設定就沒了。",
+  "Push to CyberBrain":"推送到賽博大腦",
+  "Type the passphrase first.":"先填口令。",
+  "Reading the workbench…":"正在讀取工作台…",
+  "The passphrase did not open the workbench.":"這個口令打不開工作台。",
+  "Pushed. The workbench will show it after its next sync.":"已推送。工作台下次同步後就能看到。",
+  "No CyberBrain account id is set.":"還沒有填賽博大腦帳號 ID（帳戶頁）。",
+  "This window cannot encrypt, so nothing was sent.":"這個視窗無法加密，所以什麼都沒送出去。",
+  "No date":"沒有截止時間",
+  "Overdue by {t}":"已逾期 {t}",
+  "Due in {t}":"還剩 {t}",
   'Touch screen':'觸控螢幕',
   'No touch screen was found on this PC.':'這台電腦上沒有找到觸控螢幕。',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'在裝置層級關掉觸控螢幕，也就是「裝置管理員 → 停用裝置」那個開關：玻璃上放著的手掌不會再把指標帶走。第一次切換時 Windows 會要求一次系統管理員確認，之後就靜默切換。',
@@ -815,6 +973,38 @@ const ZH_HANT_STATIC = {
   'this screen cannot be remembered by name':'這塊螢幕無法按名稱記住'
 };
 const JA_STATIC = {
+  "To-do":"やること",
+  "The list":"リスト",
+  "Sort":"並び順",
+  "Due first":"締切順",
+  "Priority first":"優先度順",
+  "Open the card as a deadline nears":"締切が近づいたらカードを開く",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"締切前の 24 時間に入ると、このカードがひとりでに開き、締切が近いほど高くなります。ドラッグ中やメニューを開いている間は動きません。",
+  "Add":"追加",
+  "What needs doing?":"何をしますか？",
+  "Due":"締切",
+  "Priority":"優先度",
+  "None":"なし",
+  "High":"高",
+  "Medium":"中",
+  "Low":"低",
+  "A to-do needs a title.":"タイトルを入れてください。",
+  "On the notch":"ノッチ上",
+  "No open to-dos.":"未完了はありません。",
+  "Delete":"削除",
+  "Passphrase":"パスフレーズ",
+  "The workbench's passphrase":"ワークベンチのパスフレーズ",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"ワークベンチの記録はブラウザを出る前に暗号化されます。そこへ足すには同じファイルを開ける必要があるため、ワークベンチで入力するパスフレーズをここに入れます。このウィンドウだけで使い、ディスクには書きません。設定を閉じれば消えます。",
+  "Push to CyberBrain":"CyberBrain へ送る",
+  "Type the passphrase first.":"先にパスフレーズを入力してください。",
+  "Reading the workbench…":"ワークベンチを読んでいます…",
+  "The passphrase did not open the workbench.":"このパスフレーズでは開けませんでした。",
+  "Pushed. The workbench will show it after its next sync.":"送信しました。次の同期でワークベンチに現れます。",
+  "No CyberBrain account id is set.":"CyberBrain のアカウント ID が未設定です。",
+  "This window cannot encrypt, so nothing was sent.":"このウィンドウでは暗号化できないため、送信していません。",
+  "No date":"締切なし",
+  "Overdue by {t}":"{t} 超過",
+  "Due in {t}":"あと {t}",
   'Touch screen':'タッチスクリーン',
   'No touch screen was found on this PC.':'この PC にはタッチスクリーンが見つかりませんでした。',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'デバイス マネージャーの [デバイスの無効化] と同じスイッチで、デバイス レベルでタッチスクリーンをオフにします。ガラスに手のひらを置いてもポインターが動きません。最初の切り替えのときだけ Windows が管理者の承認を求め、その後は静かに切り替わります。',
@@ -946,6 +1136,38 @@ const JA_STATIC = {
   'Model data':'モデルのデータ'
 };
 const KO_STATIC = {
+  "To-do":"할 일",
+  "The list":"목록",
+  "Sort":"정렬",
+  "Due first":"마감순",
+  "Priority first":"우선순위순",
+  "Open the card as a deadline nears":"마감이 가까워지면 카드 열기",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"마감 전 24시간 안에 들어가면 이 카드가 스스로 열리고, 가까울수록 더 높아집니다. 끄는 중이거나 메뉴가 열려 있을 때는 움직이지 않습니다.",
+  "Add":"추가",
+  "What needs doing?":"무엇을 해야 하나요?",
+  "Due":"마감",
+  "Priority":"우선순위",
+  "None":"없음",
+  "High":"높음",
+  "Medium":"보통",
+  "Low":"낮음",
+  "A to-do needs a title.":"제목을 넣어 주세요.",
+  "On the notch":"노치 위",
+  "No open to-dos.":"남은 할 일이 없습니다.",
+  "Delete":"삭제",
+  "Passphrase":"암호",
+  "The workbench's passphrase":"워크벤치 암호",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"워크벤치 기록은 브라우저를 떠나기 전에 암호화됩니다. 거기에 한 줄을 더하려면 같은 파일을 열어야 하므로, 워크벤치에서 쓰는 암호를 여기에 넣습니다. 이 창에서만 쓰고 디스크에 쓰지 않으며, 설정을 닫으면 사라집니다.",
+  "Push to CyberBrain":"CyberBrain으로 보내기",
+  "Type the passphrase first.":"먼저 암호를 넣어 주세요.",
+  "Reading the workbench…":"워크벤치를 읽는 중…",
+  "The passphrase did not open the workbench.":"이 암호로는 열리지 않습니다.",
+  "Pushed. The workbench will show it after its next sync.":"보냈습니다. 다음 동기화 뒤 워크벤치에 나타납니다.",
+  "No CyberBrain account id is set.":"CyberBrain 계정 ID가 없습니다.",
+  "This window cannot encrypt, so nothing was sent.":"이 창에서는 암호화할 수 없어 아무것도 보내지 않았습니다.",
+  "No date":"마감 없음",
+  "Overdue by {t}":"{t} 지남",
+  "Due in {t}":"{t} 남음",
   'Touch screen':'터치스크린',
   'No touch screen was found on this PC.':'이 PC에서 터치스크린을 찾지 못했습니다.',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'장치 관리자의 [장치 사용 안 함]과 같은 스위치로 장치 수준에서 터치스크린을 끕니다. 유리에 손바닥을 올려도 포인터가 움직이지 않습니다. 처음 전환할 때만 Windows가 관리자 승인을 한 번 요청하고, 그다음부터는 조용히 전환됩니다.',
@@ -1092,6 +1314,38 @@ const KO_STATIC = {
   'Русский':'Русский'
 };
 const UK_STATIC = {
+  "To-do":"Справи",
+  "The list":"Список",
+  "Sort":"Сортування",
+  "Due first":"Спершу термін",
+  "Priority first":"Спершу пріоритет",
+  "Open the card as a deadline nears":"Відкривати картку, коли наближається термін",
+  "In the last 24 hours before a deadline the to-do card opens by itself, and opens taller the closer it gets. It never covers the notch while you are dragging it, or while a menu is open.":"В останні 24 години перед терміном картка справ відкривається сама і тим вища, чим ближчий термін. Вона не рухається, поки ви тягнете панель або відкрите меню.",
+  "Add":"Додати",
+  "What needs doing?":"Що треба зробити?",
+  "Due":"Термін",
+  "Priority":"Пріоритет",
+  "None":"Немає",
+  "High":"Високий",
+  "Medium":"Середній",
+  "Low":"Низький",
+  "A to-do needs a title.":"У справи має бути назва.",
+  "On the notch":"На панелі",
+  "No open to-dos.":"Відкритих справ немає.",
+  "Delete":"Видалити",
+  "Passphrase":"Пароль",
+  "The workbench's passphrase":"Пароль робочого столу",
+  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"Записи робочого столу шифруються до того, як залишити браузер. Щоб додати туди справу, Codenotch має відкрити той самий файл, тому тут потрібен пароль, який ви вводите там. Він використовується лише в цьому вікні: не пишеться на диск і зникає після закриття налаштувань.",
+  "Push to CyberBrain":"Надіслати в CyberBrain",
+  "Type the passphrase first.":"Спершу введіть пароль.",
+  "Reading the workbench…":"Читаю робочий стіл…",
+  "The passphrase did not open the workbench.":"Цей пароль не відкриває робочий стіл.",
+  "Pushed. The workbench will show it after its next sync.":"Надіслано. Робочий стіл покаже це після наступної синхронізації.",
+  "No CyberBrain account id is set.":"Не задано id облікового запису CyberBrain.",
+  "This window cannot encrypt, so nothing was sent.":"Це вікно не може шифрувати, тому нічого не надіслано.",
+  "No date":"Без терміну",
+  "Overdue by {t}":"прострочено на {t}",
+  "Due in {t}":"через {t}",
   'Touch screen':'Сенсорний екран',
   'No touch screen was found on this PC.':'На цьому комп\'ютері сенсорного екрана не знайдено.',
   'Turns the touch screen off at the device level, the same switch Device Manager offers, so a palm resting on the glass cannot move the pointer. The first change asks for administrator approval once; after that it switches silently.':'Вимикає сенсорний екран на рівні пристрою — той самий перемикач «Вимкнути пристрій» у Диспетчері пристроїв, щоб долоня на склі не зрушувала вказівник. Windows запитує права адміністратора один раз, під час першого перемикання; далі перемикає без запитів.',
@@ -1342,8 +1596,8 @@ function loadLook(){
 try { window.__TAURI__.event.listen('theme_resolved', e => { if(e.payload) applyTheme(e.payload); }); } catch(e) { /* asked for again below */ }
 
 /* ---- the sidebar -------------------------------------------------------- */
-const TABS = ['accounts', 'appearance', 'general'];
-const TITLES = { accounts:'Accounts', appearance:'Appearance', general:'General' };
+const TABS = ['accounts', 'appearance', 'todos', 'general'];
+const TITLES = { accounts:'Accounts', appearance:'Appearance', todos:'To-do', general:'General' };
 const TAB_KEY = 'codenotch.settings.pane';
 let curTab = TABS[0];
 function showTab(id, moveFocus){
@@ -2318,6 +2572,189 @@ window.addEventListener('focus', () => {
   refreshScreens();
 });
 boot();
+
+/* ---- 待办 ---------------------------------------------------------------
+   这一页是唯一能打字的地方。notch 那个窗口是 focusable:false 的，键盘事件到不了那里，
+   所以「记一条」在这里，「勾掉一条」在 notch 的卡片上点一下。
+
+   两边读同一份数据（src/todos.rs）：这一页改完，notch 收到 todos 事件就跟着变。
+
+   推送这一段做的是和赛博大脑网页完全一样的加解密：PBKDF2(口令, 盐='aiwb-enc-v1:'+uid,
+   12 万次) → AES-GCM 256，云端只存密文。口令只用在这个窗口里，不落盘、关窗即清 ——
+   它是那把能打开工作台全部记录的钥匙，没有理由在关掉这一页之后还留在内存里。 */
+const TD = {
+  title: document.getElementById('td-title'),
+  date: document.getElementById('td-date'),
+  add: document.getElementById('td-add'),
+  addNote: document.getElementById('td-add-note'),
+  list: document.getElementById('td-list'),
+  segSort: document.getElementById('seg-sort'),
+  segLevel: document.getElementById('seg-level'),
+  auto: document.getElementById('sw-auto'),
+  pass: document.getElementById('td-pass'),
+  push: document.getElementById('td-push'),
+  pushNote: document.getElementById('td-push-note')
+};
+let todoView = null, todoRaw = [], tdLevel = '';
+
+// 时长单位：STATIC_TEXT 只放字符串，放不了函数，所以这一小张表单独写在这里。
+const TD_UNITS = {
+  en:{d:'d',h:'h',m:'m'}, 'pt-BR':{d:'d',h:'h',m:'min'}, ru:{d:'д',h:'ч',m:'мин'},
+  uk:{d:'д',h:'год',m:'хв'}, ja:{d:'日',h:'時間',m:'分'}, ko:{d:'일',h:'시간',m:'분'},
+  zh:{d:'天',h:'小时',m:'分钟'}, 'zh-Hant':{d:'天',h:'小時',m:'分鐘'}
+};
+function tdSpan(sec){
+  const u = TD_UNITS[uiLang] || TD_UNITS.en, n = Math.abs(sec);
+  if(n < 3600) return Math.max(1, Math.round(n/60)) + u.m;
+  if(n < 86400) return Math.round(n/3600) + u.h;
+  return Math.round(n/86400) + u.d;
+}
+function tdWhen(row){
+  if(row.left == null) return {text: ui('No date','No date'), late:false};
+  const span = tdSpan(row.left);
+  return row.left < 0
+    ? {text: ui('Overdue by {t}','Overdue by {t}').replace('{t}', span), late:true}
+    : {text: ui('Due in {t}','Due in {t}').replace('{t}', span), late:false};
+}
+function tdRowHtml(row, readOnly){
+  const when = tdWhen(row);
+  const lv = row.level === '高' ? ui('High','High') : row.level === '低' ? ui('Low','Low') : row.level === '中' ? ui('Medium','Medium') : '';
+  const meta = [when.text, lv].filter(Boolean).join(' · ');
+  const del = readOnly ? '' : `<button class="mini ghost" data-del="${esc(row.id)}">${esc(ui('Delete','Delete'))}</button>`;
+  return `<div class="item"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${row.done?'text-decoration:line-through;opacity:.6':''}">${esc(row.title)}</span>`
+    + `<span style="display:flex;align-items:center;gap:10px;flex:none">`
+    + `<span class="cap" style="margin:0;${when.late?'color:var(--danger)':''}">${esc(meta)}</span>${del}</span></div>`;
+}
+function tdRender(){
+  // 排序按钮的选中态跟着存下来的那个值走，而不是跟着刚才点的那一下
+  for(const b of TD.segSort.querySelectorAll('button')) b.classList.toggle('on', !!todoView && b.dataset.v === todoView.sort);
+  for(const b of TD.segLevel.querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === tdLevel);
+  if(TD.auto) TD.auto.classList.toggle('on', !!autoOpen);
+  if(!todoView){ TD.list.innerHTML = ''; return; }
+  const parts = [];
+  for(const r of todoView.rows || []) parts.push(tdRowHtml(r, false));
+  for(const r of todoView.remoteRows || []) parts.push(tdRowHtml(r, true));
+  TD.list.innerHTML = parts.length ? parts.join('')
+    : `<div class="item cap">${esc(ui('No open to-dos.','No open to-dos.'))}</div>`;
+}
+function tdRefresh(){
+  return invoke('get_todos').then(v => { if(v) todoView = v; tdRender(); })
+    .then(() => invoke('get_todos_raw')).then(rows => { todoRaw = Array.isArray(rows) ? rows : []; })
+    .catch(e => strip('get_todos failed: ' + errText(e)));
+}
+
+let autoOpen = true;
+function tdLoadFlags(){
+  return invoke('get_ui_flags').then(f => { autoOpen = !f || f.todo_auto_open !== false; tdRender(); }).catch(()=>{});
+}
+TD.segSort.addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]');
+  if(!b) return;
+  invoke('set_todo_sort', {sort: b.dataset.v}).then(v => { if(v) todoView = v; tdRender(); })
+    .catch(err => strip('set_todo_sort failed: ' + errText(err)));
+});
+TD.segLevel.addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]');
+  if(!b) return;
+  tdLevel = b.dataset.v;
+  tdRender();
+});
+if(TD.auto) TD.auto.addEventListener('click', () => {
+  invoke('set_todo_auto', {on: !autoOpen}).then(f => { autoOpen = !f || f.todo_auto_open !== false; tdRender(); })
+    .catch(err => strip('set_todo_auto failed: ' + errText(err)));
+});
+TD.add.addEventListener('click', () => {
+  const title = TD.title.value.trim();
+  if(!title){ TD.addNote.textContent = ui('A to-do needs a title.','A to-do needs a title.'); return; }
+  TD.addNote.textContent = '';
+  invoke('add_todo', {title, date: TD.date.value || '', time: '', level: tdLevel, note: ''})
+    .then(v => {
+      if(v) todoView = v;
+      TD.title.value = ''; TD.date.value = ''; tdLevel = '';
+      return tdRefresh().then(tdRender);
+    })
+    .catch(e => { TD.addNote.textContent = errText(e); });
+});
+TD.list.addEventListener('click', e => {
+  const b = e.target.closest('[data-del]');
+  if(!b) return;
+  invoke('delete_todo', {id: b.dataset.del}).then(v => { if(v) todoView = v; return tdRefresh().then(tdRender); })
+    .catch(err => strip('delete_todo failed: ' + errText(err)));
+});
+
+/* ---- 推送：和工作台网页同一套加密 -------------------------------------- */
+const B64 = u => { let s = ''; for(let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+const UNB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+function tdKey(pass, uid){
+  const enc = new TextEncoder();
+  return crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey'])
+    .then(base => crypto.subtle.deriveKey(
+      {name:'PBKDF2', salt: enc.encode('aiwb-enc-v1:' + uid), iterations: 120000, hash:'SHA-256'},
+      base, {name:'AES-GCM', length:256}, false, ['encrypt', 'decrypt']));
+}
+// 按 id 合并，取较新的一条 —— 和 todos.rs 的 merge_for_push 同一个规则。
+// 云端独有的条目原样留着：这次推送不该顺手删掉手机上记的东西。
+function tdMerge(cloud, local){
+  const stamp = t => { const v = Date.parse(t && t.updatedAt || ''); return isNaN(v) ? 0 : v; };
+  const out = (cloud || []).slice();
+  for(const mine of local || []){
+    const at = out.findIndex(t => t && t.id === mine.id);
+    if(at < 0) out.push(mine);
+    else if(stamp(mine) >= stamp(out[at])) out[at] = mine;
+  }
+  return out;
+}
+TD.push.addEventListener('click', () => {
+  const pass = TD.pass.value;
+  if(!pass){ TD.pushNote.textContent = ui('Type the passphrase first.','Type the passphrase first.'); return; }
+  if(!(window.crypto && crypto.subtle)){
+    TD.pushNote.textContent = ui('This window cannot encrypt, so nothing was sent.','This window cannot encrypt, so nothing was sent.');
+    return;
+  }
+  TD.push.disabled = true;
+  TD.pushNote.textContent = ui('Reading the workbench…','Reading the workbench…');
+  invoke('get_brain_uid').then(uid => {
+    const id = String(uid || '').trim();
+    if(!id) throw new Error(ui('No CyberBrain account id is set.','No CyberBrain account id is set.'));
+    return tdKey(pass, id).then(key => invoke('brain_pull_config').then(wrap => ({key, wrap})));
+  }).then(({key, wrap}) => {
+    // 没有云端那份就从一个空配置开始：工作台那边会是「第一次同步」的样子
+    const opening = (wrap && wrap.__enc === 1)
+      ? crypto.subtle.decrypt({name:'AES-GCM', iv: UNB64(wrap.iv)}, key, UNB64(wrap.ct))
+          .then(buf => JSON.parse(new TextDecoder().decode(buf)))
+          .catch(() => {
+            const err = new Error(ui('The passphrase did not open the workbench.','The passphrase did not open the workbench.'));
+            err.code = 'BAD_PASSPHRASE';
+            throw err;
+          })
+      : Promise.resolve({});
+    return opening.then(cfg => {
+      const next = (cfg && typeof cfg === 'object') ? cfg : {};
+      next.todos = tdMerge(next.todos, todoRaw);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      return crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(JSON.stringify(next)))
+        .then(buf => ({iv, buf}));
+    });
+  }).then(({iv, buf}) => invoke('brain_push_config', {iv: B64(iv), ct: B64(new Uint8Array(buf))})
+      .then(() => invoke('mark_todos_pushed')))
+  .then(view => {
+    if(view) todoView = view;
+    TD.pass.value = '';
+    TD.pushNote.textContent = ui('Pushed. The workbench will show it after its next sync.','Pushed. The workbench will show it after its next sync.');
+    return tdRefresh().then(tdRender);
+  })
+  .catch(e => {
+    TD.pushNote.textContent = (e && e.code === 'BAD_PASSPHRASE')
+      ? ui('The passphrase did not open the workbench.','The passphrase did not open the workbench.')
+      : errText(e);
+  })
+  .finally(() => { TD.push.disabled = false; });
+});
+
+function initTodos(){ tdLoadFlags().then(tdRefresh); }
+initTodos();
+window.addEventListener('focus', () => { tdRefresh(); });
+
 </script>
 </body>
 </html>

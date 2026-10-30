@@ -122,6 +122,32 @@
   .s-meta{flex:none;color:var(--ink-dim);white-space:nowrap}
   .s-meta.late{color:var(--crit)}
   .c-count{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
+  /* 待办卡的一行。整行就是一个按钮：notch 窗口是 focusable:false 的，收不到键盘，
+     所以「勾掉一条」只能是点一下，不能是输入框里按回车。 */
+  .t-row{display:flex;align-items:flex-start;gap:8px;padding:7px 6px;margin:0 -6px;border-radius:7px;cursor:pointer}
+  .t-row:hover{background:rgba(128,128,128,.14)}
+  .t-box{flex:none;width:13px;height:13px;margin-top:2px;border-radius:4px;border:1.5px solid var(--ink-dim);
+    position:relative;transition:background .15s ease,border-color .15s ease}
+  .t-row.done .t-box{background:var(--ink-dim);border-color:var(--ink-dim)}
+  .t-row.done .t-box::after{content:"";position:absolute;left:3px;top:0;width:4px;height:7px;
+    border:solid var(--card);border-width:0 1.5px 1.5px 0;transform:rotate(42deg)}
+  .t-body{flex:1 1 auto;min-width:0}
+  .t-title{font-size:12.5px;line-height:1.35;color:var(--ink);overflow:hidden;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .t-row.done .t-title{text-decoration:line-through;color:var(--ink-dim)}
+  .t-meta{display:flex;align-items:baseline;gap:6px;margin-top:3px}
+  .t-when{font-size:10.5px;color:var(--ink-dim);white-space:nowrap}
+  .t-when.late{color:var(--crit);font-weight:600}
+  .t-when.soon{color:var(--watch);font-weight:600}
+  /* 约 3 px 的时间细条：已经过去的那段，不是做完的那段。逾期满格。 */
+  .t-bar{height:3px;border-radius:2px;background:var(--track);margin-top:4px;overflow:hidden}
+  .t-bar > i{display:block;height:100%;border-radius:2px}
+  .t-group{display:flex;align-items:baseline;gap:6px;font-size:10.5px;letter-spacing:.04em;
+    color:var(--ink-dim);margin:10px 0 2px;text-transform:uppercase}
+  .t-group:first-child{margin-top:2px}
+  .t-lv{flex:none;width:5px;height:5px;border-radius:50%;margin-top:4px}
+  .t-empty{font-size:12px;color:var(--ink-dim);margin:6px 0}
+  .c-sub.todo{display:flex;gap:8px;flex-wrap:wrap}
   .dim{opacity:.55}
   /* A stale reading dims the reading only. The track, the week and the glyph are all saying the same
      old thing, but whether an agent is running right now is current either way, so the activity arc
@@ -146,7 +172,10 @@
        The 246 cap matches the upstream spec. */
     max-width:246px;margin-left:auto;background:var(--card);border-radius:16px;padding:16px;
     overflow-wrap:anywhere;min-width:0;
-    max-height:calc(100% - 16px);overflow-x:hidden;overflow-y:auto;scrollbar-width:thin; /* actions stay reachable in a tall card */
+    /* 自动撑开的待办卡按紧迫度长高（--grow 0.45 → 1）。过渡写在这里而不是 JS 里逐帧改高度：
+       那条路每一帧都要重排，而这张卡片在每次环刷新时都会重画。 */
+    max-height:calc((100% - 16px) * var(--grow,1));transition:max-height .45s ease;
+    overflow-x:hidden;overflow-y:auto;scrollbar-width:thin; /* actions stay reachable in a tall card */
     display:none;
   }
   #card.show{display:block}
@@ -1232,37 +1261,58 @@ const UI={
       resetsAt:t=>`${t}에 재설정`,resetsOn:(d,t)=>`${d} ${t}에 재설정`,resetsDate:d=>`${d}에 재설정`,
       ago:m=>m<60?`${m}분 전`:`${Math.round(m/60)}시간 전`,
       usedLeft:(used,left)=>`${used}% 사용 · ${left}% 남음`,andMore:n=>`외 ${n}개`,updated:a=>`${a}에 마지막 업데이트됨`,
-      leftOf:t=>`${t} 남음`},
+      leftOf:t=>`${t} 남음`,
+      todoRing:'할 일',todoTitle:'할 일',todoNone:'미완료 항목이 없습니다.',todoLocal:'이 PC',todoRemote:'워크벤치',
+      todoNoDate:'마감 없음',todoDone:'완료',todoLeft:t=>`${t} 남음`,todoLate:t=>`${t} 지남`,
+      units:{d:'일',h:'시간',m:'분',none:'1분 미만'}},
   'pt-BR':{locale:'pt-BR',title:n=>'Uso do '+n,resetting:'Renovando…',resetsIn:m=>`Renova em ${m} min`,
       resetsAt:t=>`Renova às ${t}`,resetsOn:(d,t)=>`Renova ${d} às ${t}`,resetsDate:d=>`Renova ${d}`,
       ago:m=>m<60?`há ${m} min`:`há ${Math.round(m/60)} h`,
       usedLeft:(used,left)=>`${used}% usado · ${left}% restante`,andMore:n=>`e mais ${n}`,
-      leftOf:t=>`${t} restantes`},
+      leftOf:t=>`${t} restantes`,
+      todoRing:'A fazer',todoTitle:'A fazer',todoNone:'Nada em aberto.',todoLocal:'Neste PC',todoRemote:'Workbench',
+      todoNoDate:'Sem prazo',todoDone:'Concluído',todoLeft:t=>`faltam ${t}`,todoLate:t=>`${t} atrasado`,
+      units:{d:'d',h:'h',m:'min',none:'<1min'}},
   en:{locale:'en-US',title:n=>n+' Usage',resetting:'Resetting…',resetsIn:m=>`Resets in ${m} min`,
       resetsAt:t=>`Resets at ${t}`,resetsOn:(d,t)=>`Resets ${d} ${t}`,resetsDate:d=>`Resets ${d}`,
       ago:m=>m<60?`${m}m ago`:`${Math.round(m/60)}h ago`,
       usedLeft:(used,left)=>`${used}% Used · ${left}% left`,andMore:n=>`and ${n} more`,updated:a=>`Updated ${a}`,
-      leftOf:t=>`${t} left`},
+      leftOf:t=>`${t} left`,
+      todoRing:'To-do',todoTitle:'To-do',todoNone:'Nothing open.',todoLocal:'On this PC',todoRemote:'Workbench',
+      todoNoDate:'No date',todoDone:'Done',todoLeft:t=>`${t} left`,todoLate:t=>`${t} late`,
+      units:{d:'d',h:'h',m:'m',none:'<1m'}},
   uk:{locale:'uk-UA',title:n=>'Використання '+n,resetting:'Скидання…',resetsIn:m=>`Скидання через ${m} хв`,
       resetsAt:t=>`Скидання о ${t}`,resetsOn:(d,t)=>`Скидання: ${d} ${t}`,resetsDate:d=>`Скидання: ${d}`,
       ago:m=>m<60?`${m} хв тому`:`${Math.round(m/60)} год тому`,
       usedLeft:(used,left)=>`Використано ${used}% · лишилось ${left}%`,andMore:n=>`і ще ${n}`,updated:a=>`Оновлено ${a}`,
-      leftOf:t=>`залишилось ${t}`},
+      leftOf:t=>`залишилось ${t}`,
+      todoRing:'Справи',todoTitle:'Справи',todoNone:'Немає відкритих справ.',todoLocal:'На цьому ПК',todoRemote:'Робочий стіл',
+      todoNoDate:'Без терміну',todoDone:'Виконано',todoLeft:t=>`лишилось ${t}`,todoLate:t=>`прострочено ${t}`,
+      units:{d:'д',h:'год',m:'хв',none:'<1 хв'}},
   ru:{locale:'ru-RU',title:n=>'Использование '+n,resetting:'Сброс…',resetsIn:m=>`Сброс через ${m} мин`,
       resetsAt:t=>`Сброс в ${t}`,resetsOn:(d,t)=>`Сброс: ${d} ${t}`,resetsDate:d=>`Сброс: ${d}`,
       ago:m=>m<60?`${m} мин назад`:`${Math.round(m/60)} ч назад`,
       usedLeft:(used,left)=>`Использовано ${used}% · осталось ${left}%`,andMore:n=>`и ещё ${n}`,updated:a=>`Обновлено ${a}`,
-      leftOf:t=>`осталось ${t}`},
+      leftOf:t=>`осталось ${t}`,
+      todoRing:'Дела',todoTitle:'Дела',todoNone:'Открытых дел нет.',todoLocal:'На этом ПК',todoRemote:'Рабочий стол',
+      todoNoDate:'Без срока',todoDone:'Готово',todoLeft:t=>`осталось ${t}`,todoLate:t=>`просрочено ${t}`,
+      units:{d:'д',h:'ч',m:'мин',none:'<1 мин'}},
   zh:{locale:'zh-CN',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分钟后重置`,
       resetsAt:t=>`${t} 重置`,resetsOn:(d,t)=>`${d} ${t} 重置`,resetsDate:d=>`${d} 重置`,
       ago:m=>m<60?`${m} 分钟前`:`${Math.round(m/60)} 小时前`,
       usedLeft:(used,left)=>`已用 ${used}% · 剩余 ${left}%`,andMore:n=>`另有 ${n} 个`,updated:a=>`更新于 ${a}`,
-      leftOf:t=>`剩余 ${t}`},
+      leftOf:t=>`剩余 ${t}`,
+      todoRing:'待办',todoTitle:'待办',todoNone:'没有未完成的待办。',todoLocal:'本机',todoRemote:'工作台',
+      todoNoDate:'没有截止时间',todoDone:'已完成',todoLeft:t=>`还剩 ${t}`,todoLate:t=>`已逾期 ${t}`,
+      units:{d:'天',h:'小时',m:'分钟',none:'不到1分钟'}},
   'zh-Hant':{locale:'zh-TW',title:n=>n+' 用量',resetting:'正在重置…',resetsIn:m=>`${m} 分鐘後重置`,
       resetsAt:t=>`${t} 重置`,resetsOn:(d,t)=>`${d} ${t} 重置`,resetsDate:d=>`${d} 重置`,
       ago:m=>m<60?`${m} 分鐘前`:`${Math.round(m/60)} 小時前`,
       usedLeft:(used,left)=>`已用 ${used}% · 剩餘 ${left}%`,andMore:n=>`另有 ${n} 個`,updated:a=>`更新於 ${a}`,
-      leftOf:t=>`剩餘 ${t}`},
+      leftOf:t=>`剩餘 ${t}`,
+      todoRing:'待辦',todoTitle:'待辦',todoNone:'沒有未完成的待辦。',todoLocal:'本機',todoRemote:'工作台',
+      todoNoDate:'沒有截止時間',todoDone:'已完成',todoLeft:t=>`還剩 ${t}`,todoLate:t=>`已逾期 ${t}`,
+      units:{d:'天',h:'小時',m:'分鐘',none:'不到 1 分鐘'}},
 };
 function ui(){return UI[uiLang]||UI.en;}
 function textCopy(value){
@@ -1327,6 +1377,12 @@ let notchSlots=null;
 // workbench id is configured, and then no business ring is drawn at all — an empty group and an
 // unconfigured one are different things and only one of them should be on screen.
 let brain={status:'none',due:{count:0,items:[],cut:false},over:{count:0,items:[],cut:false},soon:{count:0,items:[],cut:false},progress:0,ver:'',at:0,read_at:0,note:''};
+// 本机待办与赛博大脑待办合成的那一张单子（见 src/todos.rs）。谁该排前面、面板该多大、
+// 「还剩多少」都是 Rust 算的：这里的时钟和那边的时钟差一秒，数字就会对不上。
+// 页面只负责把秒数拼成人话，以及把这一格画出来。
+let todos={open:0,overdue:0,soon:0,expansion:0,rows:[],remoteRows:[],sort:'deadline'};
+let todoAutoOpen=true;      // 设置里那个「临近截止自己撑开」，默认开
+let todoCheckedAt=0;
 function slotFor(id){
   if(!Array.isArray(notchSlots)) return null;
   for(const s of notchSlots){ if(s&&s.provider===id) return s; }
@@ -1355,22 +1411,37 @@ function providers(){
   return list;
 }
 
-// The workbench's three numbers. They are counts, not gauges: nothing publishes a denominator, so
-// each ring frames the number instead of filling an arc, and colour carries the whole message —
-// dim at zero, white for something waiting, red for something already late, amber for something
-// about to be. Zero is never hidden: "0 overdue" is an answer, and often the reason to look.
+// The workbench's three numbers, with the first one replaced by the shared to-do figure.
+//
+// That slot used to be the workbench's own "open todos" count, read from its snapshot. It is now
+// "everything still open": the workbench's count plus the items this machine has not pushed yet
+// (src/todos.rs does the arithmetic and the de-duplication). One ring, one number — two rings both
+// called "todos" would be the same claim twice, with two different answers as soon as either side
+// is a minute behind.
+//
+// The to-do cell is drawn even with no workbench configured: a local list is still a list. The
+// other two are the workbench's to report and are absent without it.
 function brainCells(){
-  if(!brain||brain.status==='none') return [];
-  const live=brain.status!=='error';
-  return [
-    {id:'due', label:'Todos', n:brain.due, tone:INK},
-    {id:'over', label:'Overdue', n:brain.over, tone:CRIT},
-    {id:'soon', label:'Due soon', n:brain.soon, tone:WATCH},
-  ].map(b=>{
-    const count=(b.n&&typeof b.n.count==='number')?b.n.count:0;
-    const text=live?compactCount(count):'\u2014';
-    return Object.assign(b,{count,text,color:live&&count>0?b.tone:DIM});
+  const hasBrain=!!brain&&brain.status!=='none';
+  const live=hasBrain&&brain.status!=='error';
+  const cells=[{id:'due', label:'Todos', count:todos.open||0, tone:todoTone(), todo:true}];
+  if(hasBrain){
+    cells.push({id:'over', label:'Overdue', count:brain.over.count||0, tone:CRIT, items:brain.over.items||[], cut:!!brain.over.cut});
+    cells.push({id:'soon', label:'Due soon', count:brain.soon.count||0, tone:WATCH, items:brain.soon.items||[], cut:!!brain.soon.cut});
+  }
+  return cells.map(b=>{
+    // A to-do count is this machine's, so a workbench that failed to answer does not blank it.
+    const usable=b.todo?true:live;
+    const count=typeof b.count==='number'?b.count:0;
+    const text=usable?compactCount(count):'\u2014';
+    return Object.assign(b,{count,text,color:usable&&count>0?b.tone:DIM});
   });
+}
+// 待办的脸色：已逾期红、六小时内琥珀、越接近截止越往琥珀走，其余按普通读数。
+function todoTone(){
+  if(todos.overdue>0) return CRIT;
+  if(todos.soon>0||todos.expansion>=0.5) return WATCH;
+  return INK;
 }
 // Antigravity's "Notch reads" and "Model data", as in the Mac app; chosen in settings
 let agPrefs={limit:'automatic',model:'gemini'};
@@ -1517,16 +1588,26 @@ function renderRing(){
   for(const b of bs){
     const cell=pill.querySelector(`.cell[data-p="b:${b.id}"]`); if(!cell) continue;
     const svg=cell.querySelector('svg.ring'), num=cell.querySelector('.bnum'), label=cell.querySelector('.pct');
-    // A failed read with nothing kept leaves the frame empty but present: the ring going away would
-    // say the workbench is not configured, which is a different thing from being unreachable.
-    svg.innerHTML=`<circle cx="28" cy="28" r="22" fill="${HOLE}"/>`
-      +`<circle cx="28" cy="28" r="25" fill="none" stroke="${b.count>0?b.color:TRACK}" stroke-width="5" opacity="${brain.status==='error'?.35:1}"/>`;
+    if(b.todo){
+      // 待办这一格比别的计数多一条弧：弧长是最紧迫那条的紧迫度，逾期时画满。
+      // 它说的是「快到了」，不是「做了多少」，所以数字照旧是剩下的条数。
+      const arc=todos.overdue>0?1:Math.min(1,todos.expansion||0);
+      svg.innerHTML=`<circle cx="28" cy="28" r="22" fill="${HOLE}"/>`
+        +`<circle cx="28" cy="28" r="25" fill="none" stroke="${TRACK}" stroke-width="5"/>`
+        +svgArc(25,arc,b.color,5);
+      cell.classList.remove('stale');
+    }else{
+      // A failed read with nothing kept leaves the frame empty but present: the ring going away would
+      // say the workbench is not configured, which is a different thing from being unreachable.
+      svg.innerHTML=`<circle cx="28" cy="28" r="22" fill="${HOLE}"/>`
+        +`<circle cx="28" cy="28" r="25" fill="none" stroke="${b.count>0?b.color:TRACK}" stroke-width="5" opacity="${brain.status==='error'?.35:1}"/>`;
+      cell.classList.toggle('stale',brain.status==='stale');
+    }
     num.textContent=b.text;
     num.className='bnum'+(b.text.length>3?' w3':b.text.length>2?' w2':'');
     num.style.color=b.color;
     label.textContent=textCopy(b.label);
     label.style.color=b.color;
-    cell.classList.toggle('stale',brain.status==='stale');
   }
   renderTool();
   // The folded bar's own reading, off the same data and the same precedence. Written only when it
@@ -1587,6 +1668,67 @@ function ago(ms){
 // The card is clipped, not scrolled, so rows past this would push its title off the top; the rest are counted, as on the Mac
 const SESSION_ROWS=5;
 function moreRow(n){ return n>0?`<div class="s-more">${ui().andMore(n)}</div>`:''; }
+
+/* ---------------------------------------------------------------- 待办
+   一张单子，两半：本机能勾的，和工作台那边只读的。
+
+   勾选只能靠点：notch 窗口是 focusable:false 的，键盘事件到不了这里，所以一行既是一个显示
+   单元也是一个按钮。新增和改期在设置页做，那里能打字。 */
+const TODO_SOON=6*3600;
+
+function spanCopy(sec){
+  const U=ui().units||{d:'d',h:'h',m:'m',none:'<1m'};
+  const n=Math.max(0,Math.round(sec));
+  if(n<60) return U.none;
+  if(n<3600) return Math.round(n/60)+U.m;
+  if(n<86400) return Math.round(n/3600)+U.h;
+  return Math.round(n/86400)+U.d;
+}
+// 「还剩 2 小时」/「已逾期 3 天」。没有截止时间的说「没有截止时间」，不说 0。
+function todoWhen(row){
+  const u=ui();
+  if(row.left==null) return {text:u.todoNoDate,cls:''};
+  if(row.left<0) return {text:u.todoLate(spanCopy(-row.left)),cls:'late'};
+  return {text:u.todoLeft(spanCopy(row.left)),cls:row.left<=TODO_SOON?'soon':''};
+}
+function todoRowHtml(row){
+  const when=todoWhen(row);
+  const level=row.level==='高'?CRIT:row.level==='低'?DIM:row.level==='中'?WATCH:'';
+  // 时间条画的是「已经过去了多少」，不是「做完了多少」：逾期满格，没截止时间的不画。
+  const bar=row.left==null?'':`<div class="t-bar"><i style="width:${Math.round(Math.min(1,row.progress)*100)}%;background:${row.left<0?CRIT:tone(Math.min(1,row.progress))}"></i></div>`;
+  return `<div class="t-row${row.done?' done':''}" data-todo="${esc(row.id)}"${row.remote?' data-readonly="1"':''}>
+    <div class="t-box"></div>
+    ${level?`<span class="t-lv" style="background:${level}"></span>`:''}
+    <div class="t-body"><div class="t-title">${esc(row.title)}</div>
+      <div class="t-meta"><span class="t-when ${when.cls}">${esc(when.text)}</span></div>${bar}</div></div>`;
+}
+function renderTodoCard(c){
+  const u=ui();
+  const localRows=todos.rows||[], remoteRows=todos.remoteRows||[];
+  let html=`<div class="c-head"><span class="c-title">${esc(u.todoTitle)}</span>`
+    +`<span class="c-count" style="color:${todoTone()}">${todos.open||0}</span></div>`;
+  // 逾期和临期各说一句，用工作台那两个已经在别的环上用着的词，不再造新词
+  const bits=[];
+  if(todos.overdue>0) bits.push(`<span style="color:${CRIT}">${esc(textCopy('Overdue'))} ${todos.overdue}</span>`);
+  if(todos.soon>0) bits.push(`<span style="color:${WATCH}">${esc(textCopy('Due soon'))} ${todos.soon}</span>`);
+  if(bits.length) html+=`<div class="c-sub todo">${bits.join(' ')}</div>`;
+  if(!localRows.length&&!remoteRows.length){
+    html+=`<div class="t-empty">${esc(u.todoNone)}</div>`;
+  }else{
+    // 两组都有名字，只有一组时不加小标题：一个「本机」在只有本机的时候是噪音
+    const both=localRows.length&&remoteRows.length;
+    if(localRows.length){
+      if(both) html+=`<div class="t-group">${esc(u.todoLocal)}</div>`;
+      for(const r of localRows) html+=todoRowHtml(r);
+    }
+    if(remoteRows.length){
+      if(both) html+=`<div class="t-group">${esc(u.todoRemote)}</div>`;
+      for(const r of remoteRows) html+=todoRowHtml(r);
+    }
+  }
+  c.innerHTML=html;
+  placeCard();
+}
 
 let hoverId='workbuddy';
 function renderCard(){
@@ -1695,7 +1837,10 @@ const BRAIN_ROWS=10;
 function renderBrainCard(c,id){
   const b=brainCells().find(x=>x.id===id);
   if(!b){ c.classList.remove('show'); return; }
-  const rows=(b.n&&Array.isArray(b.n.items))?b.n.items:[];
+  // 待办那一格有自己的卡片：能勾、分两组、按紧迫度长高。它和下面这两种「只读计数」
+  // 不是同一种东西，所以先分流。
+  if(b.todo){ renderTodoCard(c); return; }
+  const rows=Array.isArray(b.items)?b.items:[];
   let html=`<div class="c-head"><span class="c-title">${esc(textCopy(b.label))}</span>`
     +`<span class="c-count" style="color:${b.color}">${esc(b.text)}</span></div>`;
   if(brain.status==='stale') html+=`<div class="c-sub">${ui().updated(ago(brain.read_at))} — ${esc(textCopy(brain.note||'showing the last reading'))}</div>`;
@@ -1718,7 +1863,7 @@ function renderBrainCard(c,id){
         +`<span class="s-name">${esc(it.title)}</span>`
         +`<span class="s-meta${late?' late':''}">${esc(meta)}</span></div>`;
     }
-    if(b.n&&b.n.cut) html+=moreRow(b.count-rows.length); // the workbench trimmed the list, say by how much
+    if(b.cut) html+=moreRow(b.count-rows.length); // the workbench trimmed the list, say by how much
     html+=`</div>`;
   }
   c.innerHTML=html;
@@ -1772,6 +1917,66 @@ function refreshClock(){
 }
 function hideCard(){card.classList.remove('show');reportHot();}
 function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hideCard,250);}
+
+/* ---------------------------------------------------------------- 待办：取数、勾选、自己撑开
+
+   取数每 20 秒一次：时间进度和紧迫度都是时间的函数，「还剩 2 小时」会自己变成「已逾期」，
+   所以不能只在打开卡片时才算。20 秒是权衡 —— 比人读一行的工夫短，又不至于每秒叫醒一次
+   Rust 去重算同一份东西。 */
+const TODO_POLL=20000;
+function refreshTodos(force){
+  return invoke('get_todos').then(v=>{
+    if(v) todos=v;
+    renderRing();
+    if(card.classList.contains('show')) renderCard();
+    applyAutoCard();
+    armWatchdog();
+  }).catch(()=>{});
+}
+/* 「越临近截止，面板越大」，CornerTodo 那条规则在这里的落点。
+
+   notch 里的「面板」就是这张卡片，所以撑开分两步：卡片自己出现，以及它能长到多高。
+   只在真的紧的时候动（grow > 0），而且折叠态、有人拖着它、开着菜单、鼠标停在别的环上时
+   一律不动 —— 一张自己弹出来、又正好挡在你正在看的东西前面的卡片，比不提醒更烦人。 */
+let autoCard=false;   // 这张卡是自己撑开的，指针不在上面
+function autoGrow(){
+  if(!todoAutoOpen) return 0;
+  return Math.max(todos.overdue>0?1:0,Math.min(1,todos.expansion||0));
+}
+function applyAutoCard(){
+  if(funcBusy()) return;
+  const grow=autoGrow();
+  // 悬停打开时永远是全高（你主动要看，不该被裁）；自己撑开时才跟着紧迫度长，0.45 → 1。
+  if(autoCard) card.style.setProperty('--grow',(0.45+0.55*grow).toFixed(2));
+  else card.style.removeProperty('--grow');
+  if(!grow){
+    if(autoCard){ autoCard=false; hideCard(); }
+    return;
+  }
+  if(folded||carrying||dragging||menuOpen||hovered) return;
+  if(!card.classList.contains('show')){ autoCard=true; hoverId='b:due'; showCard(); }
+}
+// 「现在别自作主张」的几种情形，写在一处，好让「指针移开要不要收卡片」和「要不要自己撑开」
+// 用同一个判断 —— 两处各写一遍必然会在某一种情形上分叉。
+function funcBusy(){ return folded||carrying||dragging||menuOpen; }
+// 勾掉一条。整数往返比本地猜测可靠：这条到底算不算今天到期，Rust 那边和卡片上是同一份判断。
+card.addEventListener('click',e=>{
+  const row=e.target.closest('[data-todo]');
+  if(!row) return;
+  if(row.dataset.readonly) return;          // 工作台那边的条目：那边改，这里只读
+  callq('toggle_todo',{id:row.dataset.todo}).then(v=>{
+    if(v){ todos=v; renderRing(); renderCard(); armWatchdog(); }
+  }).catch(()=>{});
+  e.stopPropagation();
+});
+setInterval(()=>refreshTodos(),TODO_POLL);
+listen('todos',e=>{
+  if(e.payload) todos=e.payload;
+  renderRing();
+  if(card.classList.contains('show')) renderCard();
+  applyAutoCard();
+  armWatchdog();
+}).catch(()=>{});
 // ===== Diagnostics + geometry =====
 function jslog(m){invoke('log_js',{msg:String(m)}).catch(()=>{});}
 function callq(cmd,args){ // invoke with visible failure: any command error is reported on screen (a silent .catch used to swallow them)
@@ -1872,18 +2077,21 @@ document.addEventListener('mousemove',e=>{
   if(dragging)return; // no card while dragging
   if(carrying) return; // the notch is in hand; the card would only be in the way
   setHovered(onHandle(e.clientX,e.clientY));
-  if(hovered){ if(card.classList.contains('show')){ clearTimeout(hideTimer); hideCard(); } return; }
+  if(hovered){ autoCard=false; if(card.classList.contains('show')){ clearTimeout(hideTimer); hideCard(); } return; }
   const hot=pointerInHot(e.clientX,e.clientY);
   if(hot){
     clearTimeout(hideTimer);
     const id=cellAt(e.clientX,e.clientY);
     // The tools ring answers a click, not a hover: a card over it would name a provider that is not
     // under the pointer, and the ring already draws the only thing there is to say about a switch.
-    if(id&&id.indexOf('tool:')===0){ hoverId=null; if(card.classList.contains('show')) hideCard(); return; }
-    if(id&&id!==hoverId){ hoverId=id; if(card.classList.contains('show')){ renderCard(); armWatchdog(); } }
+    if(id&&id.indexOf('tool:')===0){ hoverId=null; autoCard=false; if(card.classList.contains('show')) hideCard(); return; }
+    // 指针移到了别的环上：这是你主动要看那一个，自己撑开的那张让位（也不该继续占着
+    // 「自己撑开」的身份，否则指针一离开，卡片又会跳回待办）
+    if(id&&id!==hoverId){ hoverId=id; if(id!=='b:due') autoCard=false; if(card.classList.contains('show')){ renderCard(); armWatchdog(); } }
     if(!card.classList.contains('show')) showCard();
   }
-  else if(card.classList.contains('show')){ if(hideLogged++<5) jslog(`mousemove left the hot area -> collapse at ${e.clientX},${e.clientY}`); scheduleHide(); }
+  // 自己撑开的那张不跟着指针走：它存在的理由就是你在别处的时候它也在。其余照旧收起。
+  else if(card.classList.contains('show')){ if(autoCard) return; if(hideLogged++<5) jslog(`mousemove left the hot area -> collapse at ${e.clientX},${e.clientY}`); scheduleHide(); }
 });
 document.addEventListener('mouseout',e=>{ // relatedTarget null = the cursor left the page
   if(!e.relatedTarget && card.classList.contains('show')){ if(hideLogged++<5) jslog('mouseout left the page -> collapse'); scheduleHide(); }
@@ -2080,7 +2288,12 @@ function scheduleFold(){
   if(!onHover){ setFolded(false); return; }
   if(foldAllowed()) foldTimer=setTimeout(()=>{ if(foldAllowed()) setFolded(true); },FOLD_GRACE);
 }
-function applyUiFlags(f){ onHover=!!(f&&f.notch_on_hover); scheduleFold(); }
+function applyUiFlags(f){
+  onHover=!!(f&&f.notch_on_hover);
+  todoAutoOpen=!!(f&&f.todo_auto_open);
+  scheduleFold();
+  applyAutoCard();
+}
 listen('notch_pointer',e=>{ pointerIn=e.payload===true; if(pointerIn){ unfold(); refreshTouch(); } else scheduleFold(); }).catch(()=>{});
 listen('ui_flags',e=>applyUiFlags(e.payload)).catch(()=>{});
 listen('pill_backdrop',e=>{
@@ -2107,8 +2320,11 @@ invoke('get_dsh').then(u=>{dshSnap=u||dshSnap;renderRing();}).catch(()=>{});
 
 listen('antigravity',e=>{agSnap=e.payload||agSnap;settle('gemini');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_antigravity').then(u=>{agSnap=u||agSnap;renderRing();}).catch(()=>{});
-listen('cyberbrain',e=>{brain=e.payload||brain;renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
-invoke('get_cyberbrain').then(v=>{brain=v||brain;renderRing();}).catch(()=>{});
+listen('cyberbrain',e=>{brain=e.payload||brain;renderRing();if(card.classList.contains('show'))renderCard();refreshTodos();}).catch(()=>{});
+invoke('get_cyberbrain').then(v=>{brain=v||brain;renderRing();refreshTodos();}).catch(()=>{});
+// 待办的第一份读数。它和三个计数环分开取：那三个是工作台的快照（可能读不到），
+// 这一份永远有（哪怕只有本机那几条）。
+invoke('get_todos').then(v=>{if(v)todos=v;renderRing();applyAutoCard();}).catch(()=>{});
 listen('glm',e=>{glmSnap=e.payload||glmSnap;renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});
 invoke('get_glm').then(u=>{glmSnap=u||glmSnap;renderRing();}).catch(()=>{});
 listen('opencode',e=>{opencodeSnap=e.payload||opencodeSnap;settle('opencode');renderRing();if(card.classList.contains('show'))renderCard();}).catch(()=>{});

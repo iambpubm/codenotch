@@ -127,3 +127,41 @@ test('A window with no denominator draws no ring', () => {
   assert.ok(/filter\(w=>w\.count==null&&!w\.unmetered\)/.test(notch),
     'an unmetered window must not be read as a weekly one');
 });
+
+test('Every card language can word the to-do card', () => {
+  // 这张卡是新拼的，它用到的每个 ui() 键都得在七张表里，否则中文界面里会露出半句英文，
+  // 而运行时只是「查不到就退回英文」，永远不会报错。
+  const keys = ['todoRing', 'todoTitle', 'todoNone', 'todoLocal', 'todoRemote',
+    'todoNoDate', 'todoDone', 'todoLeft', 'todoLate', 'units'];
+  for (const lang of UI_LANGS) {
+    const table = block(notch, `\n  ${lang}:{locale:`);
+    for (const key of keys) {
+      assert.ok(new RegExp('(^|[,\\s])' + key + ':').test(table), `the ${lang} UI table has no ${key}`);
+    }
+  }
+});
+
+test('Every settings language can word the to-do pane', () => {
+  // 这一页的键更多，而且大多只在一个分支里用到（错误提示）。漏一条不会挂运行时，
+  // 只会在中文设置页里冒出一句英文 —— 这条测试就是那份清单。
+  const keys = ["'To-do'", "'The list'", "'Sort'", "'Due first'", "'Priority first'",
+    "'Open the card as a deadline nears'", "'Add'", "'What needs doing?'", "'Due'", "'Priority'",
+    "'None'", "'High'", "'Medium'", "'Low'", "'A to-do needs a title.'", "'On the notch'",
+    "'No open to-dos.'", "'Delete'", "'Passphrase'", "'Push to CyberBrain'",
+    "'Type the passphrase first.'", "'Reading the workbench…'",
+    "'The passphrase did not open the workbench.'",
+    "'Pushed. The workbench will show it after its next sync.'",
+    "'No CyberBrain account id is set.'", "'This window cannot encrypt, so nothing was sent.'",
+    "'No date'", "'Overdue by {t}'", "'Due in {t}'"];
+  const names = ['PT_BR', 'RU', 'ZH', 'ZH_HANT', 'JA', 'KO', 'UK'];
+  for (const name of names) {
+    const table = block(settings, `const ${name}_STATIC = {\n`, '\n};\n');
+    for (const key of keys) {
+      // 键名可能用单引号也可能用双引号包着（两种写法在文件里都有先例），所以两种都认，
+      // 认不出的才是真的漏了。
+      const bare = key.slice(1, -1);
+      assert.ok(table.includes("'" + bare + "':") || table.includes('"' + bare + '":'),
+        `the ${name} table has no ${key}`);
+    }
+  }
+});
