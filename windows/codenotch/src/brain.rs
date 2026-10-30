@@ -447,8 +447,13 @@ mod tests {
     const UID: &str = "u-abc-123";
     const IV: [u8; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     const PLAIN: &str = r#"{"todos":[{"id":"t1","title":"越南回访"}],"n":42}"#;
-    const CIPHER: &str = "b349d16461a1a5b67ba43f148f9a746457087cd60eddc27f2bcf0b4033a7f19c\
-367042517489d11774a50e0f960c462f94f2d414f43696aa71a64afec8a6f83478584b8566";
+    /// 同一份密文。记录下来时是十六进制（`b349d164…`），而 `Sealed.ct` 用的是 base64，
+    /// 所以这里存的是那份十六进制转成的 base64 —— 一个字节都没改，只是换了写法。
+    ///
+    /// 上一次这里是直接抄的十六进制，于是「逐字节一致」那条断言天生为假，
+    /// 而报告只说「失败了」：看起来像实现错了，其实是常量写错了进制。
+    const CIPHER: &str = "s0nRZGGhpbZ7pD8Uj5p0ZFcIfNYO3cJ/K88LQDOn8Zw2cEJRdInRF3SlDg+WDEYvlPLUFPQ2\
+lqpxpkr+yKb4NHhYS4Vm";
 
     #[test]
     fn the_ciphertext_matches_the_one_webcrypto_made() {
