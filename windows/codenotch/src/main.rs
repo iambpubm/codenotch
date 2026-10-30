@@ -2,6 +2,7 @@
 
 mod autostart;
 mod backdrop;
+mod brain;
 mod config;
 mod doctor;
 mod i18n;
@@ -88,6 +89,17 @@ pub struct AppState {
     /// 说话：这里记一条、推上去，手机上就看得见。`pushed` 标记只活在本机，用来避免
     /// 「本机这条 + 工作台快照的那个数」把同一条数两次。
     pub todos: Mutex<todos::Store>,
+    /// 云端有、本机没有的那些待办（每次同步重写）。只活在内存里：它们已经在云上了，
+    /// 写成本地记录会让下一次合并把它们当成「本机新记的」再推一遍。
+    pub brain_todos: Mutex<Vec<todos::Todo>>,
+    /// 同步的对外状态。
+    pub sync: Mutex<brain::SyncState>,
+    /// 最近一次本机改动的 unix 秒。同步线程看它来决定「静下来了没有」——
+    /// 连加三条待办只该推一次，而不是三次。
+    pub todo_dirty: Mutex<i64>,
+    /// 下一次允许同步的时刻。退避、以及「口令错了就先别撞网关」都写在这里，
+    /// 而不是藏在线程的局部变量里：改账号、改口令的时候，别处要能把它清零。
+    pub sync_next: Mutex<i64>,
 }
 
 fn resolved_lang(raw: &str) -> String {
@@ -797,11 +809,15 @@ fn remote_todos(brain: &cyberbrain::Brain) -> Vec<todos::Todo> {
 fn todo_view(app: &AppHandle) -> todos::View {
     let st = app.state::<AppState>();
     let brain = st.brain.lock().unwrap().clone();
-    let (items, priority_first) = {
+    let (items, priority_first, pulled) = {
         let store = st.todos.lock().unwrap();
         let cfg = st.cfg.lock().unwrap();
-        (store.items.clone(), cfg.todo_sort == "priority")
+        let pulled = st.brain_todos.lock().unwrap().clone();
+        (store.items.clone(), cfg.todo_sort == "priority", pulled)
     };
+    // 拉过云端那一份之后，清单用的是真正解出来的条目 —— 它有 `date`、有 `level`，
+    // 比工作台快照里那几行（只有标题和日期）全得多。还没拉过就退回快照。
+    let remote = if pulled.is_empty() { remote_todos(&brain) } else { pulled };
     // 没配 uid（status none）就是没有远程那半，0 是实话；读失败时保留上一次的读数，
     // 和三个计数环的口径一致 —— 「查不到」不等于「没有」。
     let (count, overdue) = if brain.status == "none" {
@@ -809,7 +825,7 @@ fn todo_view(app: &AppHandle) -> todos::View {
     } else {
         (brain.due.count, brain.over.count)
     };
-    todos::view(&items, &remote_todos(&brain), count, overdue, todos::now(), priority_first)
+    todos::view(&items, &remote, count, overdue, todos::now(), priority_first)
 }
 
 fn emit_todos(app: &AppHandle, view: &todos::View) {
@@ -819,21 +835,34 @@ fn emit_todos(app: &AppHandle, view: &todos::View) {
 /// 本地改动的公共收尾：写盘、重新算、广播。调用方必须先放掉 store 的锁，
 /// 否则 `todo_view` 会再拿一次同一把锁，当场卡死。
 fn after_todo_change(app: &AppHandle) -> Result<todos::View, String> {
+    mark_dirty(app);
     let view = todo_view(app);
     emit_todos(app, &view);
     Ok(view)
 }
 
+/// 本机真的改了东西：告诉同步线程「有一批改动等着推」。
+///
+/// 只由增删改调用，排序不走这里 —— 排序是这边的偏好，云端没有这个概念，
+/// 改它不该把一次网络请求和一份备份一起拖出来。
+fn mark_dirty(app: &AppHandle) {
+    let st = app.state::<AppState>();
+    *st.todo_dirty.lock().unwrap() = now_secs();
+    let state = {
+        let mut s = st.sync.lock().unwrap();
+        // 没记住口令时不存在「等着推」这回事，别让设置页显示一个永远不动的「待同步」
+        s.pending = s.saved;
+        if s.saved && s.state != "working" {
+            s.state = "idle".into();
+        }
+        s.clone()
+    };
+    emit_sync(app, &state);
+}
+
 #[tauri::command]
 fn get_todos(app: AppHandle) -> todos::View {
     todo_view(&app)
-}
-
-/// 完整记录，给设置页的编辑和「推送到赛博大脑」用：`get_todos` 返回的是显示用的行，
-/// 没有 kind、cat 这些推上去必需的字段。
-#[tauri::command]
-fn get_todos_raw(state: tauri::State<AppState>) -> Vec<todos::Todo> {
-    state.todos.lock().unwrap().items.clone()
 }
 
 fn stamp_now() -> String {
@@ -962,7 +991,10 @@ fn set_todo_sort(app: AppHandle, sort: String) -> Result<todos::View, String> {
         cfg.todo_sort = config::todo_sort_or_deadline(&sort);
         config::save(&cfg);
     }
-    after_todo_change(&app)
+    // 不标脏：排序是这边的偏好，云端没有这个概念，改它不该触发一次推送。
+    let view = todo_view(&app);
+    emit_todos(&app, &view);
+    Ok(view)
 }
 
 /// 那个「临近截止自己撑开」的开关。关掉之后环照样变色、卡片照样在悬停时打开，
@@ -980,127 +1012,250 @@ fn set_todo_auto(app: AppHandle, on: bool) -> UiFlags {
     flags
 }
 
-/// 推送成功之后调用：这些条目已经上了云，工作台的快照里会有它们，本机不该再额外加一遍。
-#[tauri::command]
-fn mark_todos_pushed(app: AppHandle) -> todos::View {
-    {
+/* ---- 待办 ↔ 赛博大脑：同步 --------------------------------------------- */
+
+fn now_secs() -> i64 {
+    chrono::Local::now().timestamp()
+}
+
+fn emit_sync(app: &AppHandle, state: &brain::SyncState) {
+    let _ = app.emit("brain_sync", state.clone());
+}
+
+/// 同步线程多久看一次。两秒的粒度够用，空转也不占什么。
+const SYNC_TICK_SECS: u64 = 2;
+/// 静多久才算写完。连加三条待办只该推一次，而不是三次。
+const SYNC_DEBOUNCE_SECS: i64 = 8;
+/// 定时拉一次云端：手机上加的条目要能出现在条子上，而工作台不一定会开着。
+const SYNC_PULL_SECS: i64 = 300;
+/// 网络失败后的退避梯度（秒）。断了网不该每两秒撞一次网关。
+const SYNC_BACKOFF: [i64; 3] = [30, 120, 480];
+/// 非网络故障（口令不对、云端形状看不懂）等多久再碰一次。什么都不做也一样的结果，
+/// 但也不能永远不动 —— 万一他是在别处把口令改回来了呢。
+const SYNC_COOLDOWN_SECS: i64 = 3600;
+
+/// 跑一次同步：读云端、合并、按需写回。`write_back` 为假时只读 —— 定时拉取走这条路，
+/// 它不改动云端任何一个字节。
+///
+/// `started` 是这次同步开始的时刻，用来判断「推送期间他是不是又改了一条」。
+fn sync_once(app: &AppHandle, write_back: bool, started: i64) -> Result<brain::Tick, brain::Fail> {
+    let (uid, local, dirty) = {
         let st = app.state::<AppState>();
-        let mut store = st.todos.lock().unwrap();
-        for item in store.items.iter_mut().filter(|t| !t.deleted) {
-            item.pushed = true;
-        }
-        let _ = todos::save(&store);
+        let uid = st.cfg.lock().unwrap().brain_uid.trim().to_string();
+        let local = st.todos.lock().unwrap().items.clone();
+        let dirty = *st.todo_dirty.lock().unwrap();
+        (uid, local, dirty)
+    };
+    if uid.is_empty() {
+        return Err(brain::Fail::NoUid);
     }
+    let Some(pass) = brain::saved_pass() else {
+        return Err(brain::Fail::Local("没有记住口令".into()));
+    };
+    // 没有本机改动就只读。推送是整包覆盖，而工作台自己也在写同一份记录 ——
+    // 每一次「没东西可推」的写入都是一次白送给对方的覆盖窗口，换成一次纯读取就没有了。
+    let write_back = write_back && dirty > 0;
+
+    let tick = brain::run_once(&pass, &uid, &local, write_back)?;
+
+    let st = app.state::<AppState>();
+    if tick.pushed {
+        {
+            let mut store = st.todos.lock().unwrap();
+            for item in store.items.iter_mut().filter(|t| !t.deleted) {
+                item.pushed = true;
+            }
+            let _ = todos::save(&store);
+        }
+        // 推送期间他又改了一条，那条还没上云：脏标记要留着，不能无条件清零。
+        let mut dirty = st.todo_dirty.lock().unwrap();
+        if *dirty <= started {
+            *dirty = 0;
+        }
+    }
+    *st.brain_todos.lock().unwrap() = tick.remote.clone();
+    Ok(tick)
+}
+
+/// 记下这次的结果，广播出去，并定下「下一次最早什么时候可以再试」。
+fn park(
+    app: &AppHandle,
+    outcome: &Result<brain::Tick, brain::Fail>,
+    now: i64,
+    misses: &mut usize,
+) {
+    let retry_in = match outcome {
+        Ok(_) => {
+            *misses = 0;
+            0
+        }
+        Err(fail) if fail.retryable() => {
+            *misses += 1;
+            SYNC_BACKOFF[(*misses - 1).min(SYNC_BACKOFF.len() - 1)]
+        }
+        Err(_) => SYNC_COOLDOWN_SECS,
+    };
+    let st = app.state::<AppState>();
+    let pending = *st.todo_dirty.lock().unwrap() > 0;
+    let state = {
+        let mut s = st.sync.lock().unwrap();
+        s.saved = brain::saved_pass().is_some();
+        s.pending = pending;
+        match outcome {
+            Ok(_) => {
+                s.state = "ok".into();
+                s.last_ok = now;
+                s.error.clear();
+                s.code.clear();
+            }
+            Err(fail) => {
+                s.state = "error".into();
+                s.code = fail.code().into();
+                // 口令错由页面按语言说 —— 这一页有八种语言，一句写死的中文在另外七种里是缺口。
+                s.error = match fail {
+                    brain::Fail::BadPass => String::new(),
+                    other => other.text(),
+                };
+            }
+        }
+        s.clone()
+    };
+    emit_sync(app, &state);
+    // 冷却写进共享状态而不是只留在循环的局部变量里：改口令、改账号的时候别处要能把它清零，
+    // 否则「他刚把错的口令改对」之后，还要等满一小时才看得见结果。
+    *st.sync_next.lock().unwrap() = now + retry_in;
+}
+
+/// 后台的同步循环。两件事合在一个线程里：等本机静下来就推，以及每隔几分钟拉一次。
+///
+/// 合成一个线程是刻意的 —— 两者共用同一句口令、同一个账号 id，分成两处就要各自处理
+/// 「正在推的时候又来拉一次」这种情况。
+fn spawn_sync(app: AppHandle) {
+    std::thread::spawn(move || {
+        // 开机第一件事：把「凭据管理器里有没有口令」读进来。不读一次的话，
+        // 状态会一直是默认的 off，循环就永远空转下去。
+        {
+            let st = app.state::<AppState>();
+            let saved = brain::saved_pass().is_some();
+            let mut s = st.sync.lock().unwrap();
+            s.saved = saved;
+            if saved {
+                s.state = "idle".into();
+            }
+        }
+        let mut last_pull = 0i64;
+        let mut misses = 0usize;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(SYNC_TICK_SECS));
+            let now = now_secs();
+            let (dirty, saved, next) = {
+                let st = app.state::<AppState>();
+                let saved = st.sync.lock().unwrap().saved;
+                let dirty = *st.todo_dirty.lock().unwrap();
+                let next = *st.sync_next.lock().unwrap();
+                (dirty, saved, next)
+            };
+            if now < next {
+                continue;
+            }
+            // 没有口令就没有可执行的东西。这不是错误，只是还没设置。
+            if !saved {
+                continue;
+            }
+            let want_push = dirty > 0 && now - dirty >= SYNC_DEBOUNCE_SECS;
+            let want_pull = now - last_pull >= SYNC_PULL_SECS;
+            if !want_push && !want_pull {
+                continue;
+            }
+
+            {
+                let st = app.state::<AppState>();
+                let mut s = st.sync.lock().unwrap();
+                s.state = "working".into();
+                let snapshot = s.clone();
+                drop(s);
+                emit_sync(&app, &snapshot);
+            }
+            let started = now_secs();
+            let outcome = sync_once(&app, want_push, started);
+            if outcome.is_ok() {
+                last_pull = now;
+                let view = todo_view(&app);
+                emit_todos(&app, &view);
+            }
+            // park 会记下这次的结果、广播状态，并把下一次允许的时刻写进 sync_next
+            park(&app, &outcome, now, &mut misses);
+        }
+    });
+}
+
+/// 记住口令。返回的状态里 `saved` 说的才是实话：凭据管理器收下了没有。
+///
+/// 收不下就直接报错，而不是假装记住了 —— 一个只在本次运行期有效的口令，第二天开机
+/// 就变成「怎么又不同步了」，那种故障没法自己解释清楚。
+#[tauri::command]
+fn set_brain_pass(app: AppHandle, pass: String) -> Result<brain::SyncState, String> {
+    let pass = pass.trim().to_string();
+    if pass.is_empty() {
+        return Err("口令不能为空".into());
+    }
+    if !brain::remember(&pass) {
+        return Err("这个 Windows 账户上存不住口令（凭据管理器拒绝了）".into());
+    }
+    let st = app.state::<AppState>();
+    {
+        let mut s = st.sync.lock().unwrap();
+        s.saved = true;
+        s.state = "idle".into();
+        s.error.clear();
+        s.code.clear();
+    }
+    // 他刚输完口令，等 8 秒的防抖没有意义：把脏标记的时间往回拨到「已经静够了」，
+    // 顺便把上一次失败留下的冷却清掉 —— 他可能正是为了修那个错才重输的。
+    *st.sync_next.lock().unwrap() = 0;
+    *st.todo_dirty.lock().unwrap() = now_secs() - SYNC_DEBOUNCE_SECS;
+    let state = st.sync.lock().unwrap().clone();
+    emit_sync(&app, &state);
+    Ok(state)
+}
+
+#[tauri::command]
+fn forget_brain_pass(app: AppHandle) -> brain::SyncState {
+    brain::forget_pass();
+    let st = app.state::<AppState>();
+    let state = {
+        let mut s = st.sync.lock().unwrap();
+        s.saved = false;
+        s.state = "off".into();
+        s.error.clear();
+        s.code.clear();
+        s.clone()
+    };
+    emit_sync(&app, &state);
+    state
+}
+
+/// 现在就同步一次。设置页那个按钮走这里。
+///
+/// 返回的是状态而不是错误：调用方要显示的东西和后台自动同步完全一样，
+/// 分成两条失败路径只会让两处的文案慢慢长出差别。
+#[tauri::command]
+fn brain_sync_now(app: AppHandle) -> brain::SyncState {
+    let started = now_secs();
+    let outcome = sync_once(&app, true, started);
+    let mut misses = 0;
+    park(&app, &outcome, started, &mut misses);
     let view = todo_view(&app);
     emit_todos(&app, &view);
-    view
+    app.state::<AppState>().sync.lock().unwrap().clone()
 }
 
-/// 待办推送的两条通道：解密、加密全在页面上用 WebCrypto 做，Rust 只把字节送到网关。
-///
-/// 这样口令一个字都不进 Rust、不进盘，也不会出现在这个仓库里 —— 而云端那份 config 是
-/// 端到端加密的（`{__enc:1, iv, ct}`），没有口令谁也读不了，包括本程序。
-const BRAIN_GATEWAY: &str =
-    "https://sonnet-ai-d9glodhldc474eb0c-1318171231.ap-shanghai.app.tcloudbase.com/api";
-const BRAIN_UA: &str = "Codenotch/1.18 (Windows)";
-
-fn brain_uid(state: &tauri::State<AppState>) -> Result<String, String> {
-    let uid = state.cfg.lock().unwrap().brain_uid.trim().to_string();
-    if uid.is_empty() {
-        return Err("还没有填赛博大脑账号 ID（设置 → 账户）".into());
-    }
-    Ok(uid)
-}
-
-fn brain_post(body: &str) -> Result<serde_json::Value, String> {
-    // 函数把 body 当纯文本读，所以 content type 写 text，和页面里的 fetch 一致
-    let response = ureq::post(BRAIN_GATEWAY)
-        .timeout(std::time::Duration::from_secs(30))
-        .set("Content-Type", "text/plain;charset=UTF-8")
-        .set("Accept", "application/json")
-        .set("User-Agent", BRAIN_UA)
-        .send_string(body)
-        .map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("赛博大脑网关回了 {code}"),
-            other => other.to_string(),
-        })?;
-    let value: serde_json::Value = response.into_json().map_err(|e| e.to_string())?;
-    if value.get("code").and_then(|c| c.as_i64()) == Some(0) || value.get("ok").and_then(|o| o.as_bool()) == Some(true) {
-        Ok(value)
-    } else {
-        Err(value
-            .get("error")
-            .or_else(|| value.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("赛博大脑没有接受这次请求")
-            .to_string())
-    }
-}
-
-/// 云端那份 config 的密文包装，原样交给页面去解。
 #[tauri::command]
-fn brain_pull_config(state: tauri::State<AppState>) -> Result<serde_json::Value, String> {
-    let uid = brain_uid(&state)?;
-    let body = serde_json::json!({ "op": "pull", "tbl": "config", "uid": uid }).to_string();
-    let reply = brain_post(&body)?;
-    let data = reply.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    let first = match data {
-        serde_json::Value::Array(rows) => rows.into_iter().next().unwrap_or(serde_json::Value::Null),
-        other => other,
-    };
-    // 页面要的是那层包装：单例 blob 存在 `{ cfg: {__enc, iv, ct} }` 里
-    Ok(first.get("cfg").cloned().unwrap_or(serde_json::Value::Null))
-}
-
-/// 页面加密好的一整份 config 推上去。整包覆盖是工作台自己的做法（它的 `push` 也是先拉
-/// 云端、解密、按 id 合并、再加密上传），所以这里只负责把密文送到，不碰内容。
-///
-/// **推送前把云端现在那份原样存一份。** 这是整个集成里唯一会真正改动工作台数据的动作，
-/// 而它是一次覆盖；万一页面那边合并错了，这一份密文就是能原样推回去的东西。存的是密文，
-/// 所以留在这里也不比云端更暴露 —— 没有口令，它也读不出来。
-#[tauri::command]
-fn brain_push_config(state: tauri::State<AppState>, iv: String, ct: String) -> Result<(), String> {
-    let uid = brain_uid(&state)?;
-    backup_cloud_config(&uid);
-    let body = serde_json::json!({
-        "op": "push",
-        "tbl": "config",
-        "uid": uid,
-        "rows": [{ "cfg": { "__enc": 1, "iv": iv, "ct": ct } }]
-    })
-    .to_string();
-    brain_post(&body)?;
-    Ok(())
-}
-
-/// 覆盖前的旧版留档，最多 20 份，多的按文件名（时间戳）删最旧的。
-fn backup_cloud_config(uid: &str) {
-    let body = serde_json::json!({ "op": "pull", "tbl": "config", "uid": uid }).to_string();
-    let Ok(reply) = brain_post(&body) else { return };
-    // 空答复说明云端还没有这份配置，那就没有东西可以被覆盖
-    if reply.get("data").map_or(true, |d| d.is_null()) {
-        return;
-    }
-    let dir = config::config_path().with_file_name("brain-backup");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
-    let _ = std::fs::write(dir.join(format!("config-{stamp}.json")), reply.to_string());
-    let mut names: Vec<String> = match std::fs::read_dir(&dir) {
-        Ok(it) => it
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| n.starts_with("config-") && n.ends_with(".json"))
-            .collect(),
-        // 读不出来就当作没有旧档可删：留档本身已经写成功了，清理失败不该让它看起来没写成
-        Err(_) => Vec::new(),
-    };
-    names.sort();
-    while names.len() > 20 {
-        let oldest = names.remove(0);
-        let _ = std::fs::remove_file(dir.join(oldest));
-    }
+fn get_brain_sync(app: AppHandle) -> brain::SyncState {
+    let st = app.state::<AppState>();
+    let mut s = st.sync.lock().unwrap();
+    s.saved = brain::saved_pass().is_some();
+    s.clone()
 }
 
 /// The workbench account id. Read back so Settings can show whether one is set and how long it is;
@@ -1122,6 +1277,14 @@ fn set_brain_uid(app: AppHandle, uid: String) -> String {
         let mut c = st.cfg.lock().unwrap();
         c.brain_uid = value.clone();
         config::save(&c);
+    }
+    // 换了账号：上一次拉到的云端条目不属于任何人了，冷却也一起清掉 —— 上一句口令
+    // 在旧账号下解不开，那条「口令打不开工作台」的判定对新的这个不算数。
+    {
+        let st = app.state::<AppState>();
+        *st.brain_todos.lock().unwrap() = Vec::new();
+        *st.sync_next.lock().unwrap() = 0;
+        *st.todo_dirty.lock().unwrap() = now_secs();
     }
     // The save answers straight away, and the read that makes the rings appear is a network round
     // trip. It happens on its own thread so a Save button never waits on a timeout; the result
@@ -2476,6 +2639,10 @@ fn main() {
             activity: Mutex::new(Vec::new()),
             brain: Mutex::new(brain0),
             todos: Mutex::new(todos::load()),
+            brain_todos: Mutex::new(Vec::new()),
+            sync: Mutex::new(brain::SyncState::default()),
+            todo_dirty: Mutex::new(0),
+            sync_next: Mutex::new(0),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -2493,7 +2660,6 @@ fn main() {
             get_activity,
             get_cyberbrain,
             get_todos,
-            get_todos_raw,
             add_todo,
             update_todo,
             toggle_todo,
@@ -2502,9 +2668,10 @@ fn main() {
             close_quick,
             set_todo_sort,
             set_todo_auto,
-            mark_todos_pushed,
-            brain_pull_config,
-            brain_push_config,
+            set_brain_pass,
+            forget_brain_pass,
+            brain_sync_now,
+            get_brain_sync,
             get_brain_uid,
             set_brain_uid,
             open_data_dir,
@@ -2589,6 +2756,7 @@ fn main() {
             opencode::start(handle.clone());
             activity::start(handle.clone());
             cyberbrain::start(handle.clone());
+            spawn_sync(handle.clone());
             // Collecting glyphs may read icon resources out of a few executables; do it off the main thread and push when done
             let gh = handle.clone();
             std::thread::spawn(move || reload_glyphs(&gh));

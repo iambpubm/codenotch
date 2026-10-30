@@ -436,11 +436,11 @@ pub fn new_id() -> String {
 ///
 /// **这条规则的执行方在设置页**（`tdMerge`），因为整份 config 的加解密只有 WebView 里
 /// 的 WebCrypto 做得了 —— Rust 这一侧没有能用的加密库（CI 是 `--locked`，加不了依赖）。
-/// 留在这里的是同一条规则的可测版本：前端的实现照着它写，测试钉住它的行为，
-/// 免得两边各自演化成「谁算较新」的两个答案。
+/// 合并规则只有这一份实现：同步在 Rust 里跑（`brain::run_once`），前端不再自己再写一版。
+/// 上一版两边各有一份，然后分叉了 —— 摘本机标记那段页面上的漏了，推上去的每一条都带着
+/// `pushed: true` 进了工作台的记录。
 ///
 /// 出去的那份不带本机标记（`remote`、`pushed`）：工作台不认识它们，带着只是噪音。
-#[allow(dead_code)]
 pub fn merge_for_push(local: &[Todo], cloud: &[Todo]) -> Vec<Todo> {
     fn clean(todo: &Todo) -> Todo {
         let mut out = todo.clone();

@@ -98,6 +98,10 @@
   .acct-col{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:8px 0 0 26px}
   .acct-col > span{font-size:13px}
   .cred{width:100%;box-sizing:border-box;padding:5px 8px;border-radius:7px;border:1px solid var(--seg-bg);background:var(--seg-bg);color:var(--text);font:inherit;font-size:12px}
+  /* `width:100%` on the field makes its flex basis the whole row, so the label beside it shrinks — and a
+     two-character Chinese label shrinks to one character and stacks vertically. The label keeps its own
+     width; the field gives up the room instead, which is what it is there for. */
+  .item:has(> .cred) > span{flex:0 0 auto}
   .cred:focus{outline:none;border-color:var(--accent)}
   .acct-actions{display:flex;gap:8px}
   .mini{padding:4px 12px;border-radius:7px;border:1px solid var(--seg-bg);background:var(--seg-bg);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
@@ -236,9 +240,13 @@
         <div class="sec">CyberBrain</div>
         <div class="group">
           <div class="item"><span>Passphrase</span><input id="td-pass" class="cred" type="password" placeholder="The workbench's passphrase" aria-label="Passphrase"></div>
-          <div class="item cap">The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.</div>
-          <div class="item"><button class="btn" id="td-push">Push to CyberBrain</button></div>
-          <div class="item cap" id="td-push-note"></div>
+          <div class="item cap">The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.</div>
+          <div class="item"><span id="td-pass-who" data-dynamic></span><button class="btn" id="td-pass-save">Remember it</button><button class="btn" id="td-pass-forget" hidden>Forget it</button></div>
+        </div>
+        <div class="group">
+          <div class="item"><span>Last sync</span><span class="value" id="td-sync-when" data-dynamic>Not yet</span><button class="btn" id="td-sync-now">Sync now</button></div>
+          <div class="item cap" id="td-sync-note" data-dynamic></div>
+          <div class="item cap">While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.</div>
         </div>
       </section>
 
@@ -319,14 +327,27 @@ const PT_BR_STATIC = {
   "Delete":"Excluir",
   "Passphrase":"Senha",
   "The workbench's passphrase":"A senha do workbench",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"Os registros do workbench são criptografados antes de sair do navegador. Para acrescentar uma tarefa, o Codenotch precisa abrir esse mesmo arquivo, então esta é a senha que você digita lá. Ela é usada apenas nesta janela: não é gravada em disco e não sobrevive ao fechar as configurações.",
-  "Push to CyberBrain":"Enviar para o CyberBrain",
+  "Remember it":"Lembrar",
+  "Forget it":"Esquecer",
+  "Sync now":"Sincronizar agora",
+  "Last sync":"Última sincronização",
+  "Not yet":"Ainda não",
+  "Remembered":"Lembrada",
+  "Not remembered":"Não lembrada",
+  "No passphrase remembered, so nothing is synced.":"Nenhuma senha lembrada, então nada é sincronizado.",
+  "Could not reach the gateway. It will try again.":"Não deu para alcançar o gateway. Vai tentar de novo.",
+  "Sync failed.":"A sincronização falhou.",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"O workbench devolveu um arquivo que esta versão não consegue ler, então nada foi alterado.",
+  "The sync stopped on this machine. Nothing was sent or changed.":"A sincronização parou nesta máquina. Nada foi enviado nem alterado.",
+  "Syncing…":"Sincronizando…",
+  "Waiting to push.":"Esperando para enviar.",
+  "Synced.":"Sincronizado.",
+  "Remembered. It syncs on its own.":"Lembrada. Sincroniza sozinha.",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"A senha que abre o workbench. Ela fica no Gerenciador de Credenciais do Windows, sob a sua conta do Windows, onde você pode vê-la ou apagá-la. Ela nunca sai daqui: o que vai para o gateway é só o arquivo cifrado que ela produz.",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"Com a senha lembrada, uma tarefa que você acrescenta ou marca é enviada alguns segundos depois de você parar, e a cada cinco minutos o Codenotch relê o workbench — então uma criada no celular também aparece aqui. Antes de cada envio, uma cópia do que vai ser substituído fica na pasta de dados, no máximo três por dia.",
   "Type the passphrase first.":"Digite a senha primeiro.",
-  "Reading the workbench…":"Lendo o workbench…",
   "The passphrase did not open the workbench.":"Essa senha não abre o workbench.",
-  "Pushed. The workbench will show it after its next sync.":"Enviado. O workbench mostrará depois da próxima sincronização.",
   "No CyberBrain account id is set.":"Nenhum id de conta do CyberBrain foi definido.",
-  "This window cannot encrypt, so nothing was sent.":"Esta janela não consegue criptografar, então nada foi enviado.",
   "No date":"Sem prazo",
   "Overdue by {t}":"{t} em atraso",
   "Due in {t}":"faltam {t}",
@@ -497,14 +518,27 @@ const RU_STATIC = {
   "Delete":"Удалить",
   "Passphrase":"Пароль",
   "The workbench's passphrase":"Пароль рабочего стола",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"Записи рабочего стола шифруются до того, как покинут браузер. Чтобы добавить туда дело, Codenotch должен открыть тот же файл, поэтому здесь нужен пароль, который вы вводите там. Он используется только в этом окне: не пишется на диск и исчезает при закрытии настроек.",
-  "Push to CyberBrain":"Отправить в CyberBrain",
+  "Remember it":"Запомнить",
+  "Forget it":"Забыть",
+  "Sync now":"Синхронизировать",
+  "Last sync":"Последняя синхронизация",
+  "Not yet":"Ещё нет",
+  "Remembered":"Запомнен",
+  "Not remembered":"Не запомнен",
+  "No passphrase remembered, so nothing is synced.":"Пароль не запомнен, поэтому синхронизации нет.",
+  "Could not reach the gateway. It will try again.":"Не удалось связаться со шлюзом. Попробует ещё раз.",
+  "Sync failed.":"Синхронизация не удалась.",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"Workbench вернул файл, который эта сборка не может прочитать, поэтому ничего не изменено.",
+  "The sync stopped on this machine. Nothing was sent or changed.":"Синхронизация остановилась на этой машине. Ничего не отправлено и не изменено.",
+  "Syncing…":"Синхронизация…",
+  "Waiting to push.":"Ждёт отправки.",
+  "Synced.":"Синхронизировано.",
+  "Remembered. It syncs on its own.":"Запомнен. Дальше сам.",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"Пароль, который открывает workbench. Он хранится в диспетчере учётных данных Windows под вашей учётной записью — там его можно посмотреть или удалить. Наружу он не уходит: к шлюзу уходит только зашифрованный файл, который он создаёт.",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"Пока пароль запомнен, дело, которое вы добавили или отметили, уходит через несколько секунд после того, как вы остановились, а каждые пять минут Codenotch перечитывает workbench — так что дело, добавленное с телефона, тоже появится здесь. Перед каждой отправкой в папке данных остаётся копия того, что будет заменено, не больше трёх в день.",
   "Type the passphrase first.":"Сначала введите пароль.",
-  "Reading the workbench…":"Читаю рабочий стол…",
   "The passphrase did not open the workbench.":"Этот пароль не открывает рабочий стол.",
-  "Pushed. The workbench will show it after its next sync.":"Отправлено. Рабочий стол покажет это после следующей синхронизации.",
   "No CyberBrain account id is set.":"Не задан id учётной записи CyberBrain.",
-  "This window cannot encrypt, so nothing was sent.":"Это окно не может шифровать, поэтому ничего не отправлено.",
   "No date":"Без срока",
   "Overdue by {t}":"просрочено на {t}",
   "Due in {t}":"через {t}",
@@ -642,14 +676,27 @@ const ZH_STATIC = {
   "Delete":"删除",
   "Passphrase":"口令",
   "The workbench's passphrase":"工作台的口令",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"工作台的记录在离开浏览器之前就加密了。要往里面加一条待办，Codenotch 必须先解开同一份文件，所以这里填你在工作台上输的那个口令。它只用在这个窗口里：不写盘，关掉设置就没了。",
-  "Push to CyberBrain":"推送到赛博大脑",
+  "Remember it":"记住",
+  "Forget it":"忘掉",
+  "Sync now":"立即同步",
+  "Last sync":"上次同步",
+  "Not yet":"还没有",
+  "Remembered":"已记住",
+  "Not remembered":"未记住",
+  "No passphrase remembered, so nothing is synced.":"没记住口令，所以不会同步。",
+  "Could not reach the gateway. It will try again.":"连不上网关，稍后会再试。",
+  "Sync failed.":"同步失败。",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"工作台返回了一份这个版本读不懂的文件，所以什么都没有改动。",
+  "The sync stopped on this machine. Nothing was sent or changed.":"同步在这台电脑上停住了。没有发出任何东西，也没有改动任何东西。",
+  "Syncing…":"正在同步…",
+  "Waiting to push.":"等着推上去。",
+  "Synced.":"已同步。",
+  "Remembered. It syncs on its own.":"已记住，之后自动同步。",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"打开工作台的那个口令。它存在 Windows 凭据管理器里，跟着你这个 Windows 账户走，你随时可以查看或删掉。它本身不会离开这台电脑：送到网关去的只有它加密出来的那份密文。",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"记住口令之后，你加的一条、勾掉的一条，会在你停手几秒后推上去；每五分钟还会把工作台读回来一次 —— 所以手机上记的那条，在这里也看得见。每次推送前，将要被覆盖的那份会在数据目录里留一个副本，一天最多三份。",
   "Type the passphrase first.":"先填口令。",
-  "Reading the workbench…":"正在读取工作台…",
   "The passphrase did not open the workbench.":"这个口令打不开工作台。",
-  "Pushed. The workbench will show it after its next sync.":"已推送。工作台下次同步后就能看到。",
   "No CyberBrain account id is set.":"还没有填赛博大脑账号 ID（账户页）。",
-  "This window cannot encrypt, so nothing was sent.":"这个窗口无法加密，所以什么都没发出去。",
   "No date":"没有截止时间",
   "Overdue by {t}":"已逾期 {t}",
   "Due in {t}":"还剩 {t}",
@@ -818,14 +865,27 @@ const ZH_HANT_STATIC = {
   "Delete":"刪除",
   "Passphrase":"口令",
   "The workbench's passphrase":"工作台的口令",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"工作台的記錄在離開瀏覽器之前就加密了。要往裡面加一條待辦，Codenotch 必須先解開同一份檔案，所以這裡填你在工作台上輸入的那個口令。它只在這個視窗裡用：不寫盤，關掉設定就沒了。",
-  "Push to CyberBrain":"推送到賽博大腦",
+  "Remember it":"記住",
+  "Forget it":"忘掉",
+  "Sync now":"立即同步",
+  "Last sync":"上次同步",
+  "Not yet":"還沒有",
+  "Remembered":"已記住",
+  "Not remembered":"未記住",
+  "No passphrase remembered, so nothing is synced.":"沒記住口令，所以不會同步。",
+  "Could not reach the gateway. It will try again.":"連不上閘道，稍後會再試。",
+  "Sync failed.":"同步失敗。",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"工作台回傳了一份這個版本讀不懂的檔案，所以什麼都沒有改動。",
+  "The sync stopped on this machine. Nothing was sent or changed.":"同步在這台電腦上停住了。沒有送出任何東西，也沒有改動任何東西。",
+  "Syncing…":"正在同步…",
+  "Waiting to push.":"等著推上去。",
+  "Synced.":"已同步。",
+  "Remembered. It syncs on its own.":"已記住，之後自動同步。",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"打開工作台的那個口令。它存在 Windows 認證管理員裡，跟著你這個 Windows 帳戶走，你隨時可以查看或刪掉。它本身不會離開這台電腦：送到閘道去的只有它加密出來的那份密文。",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"記住口令之後，你加的一條、勾掉的一條，會在你停手幾秒後推上去；每五分鐘還會把工作台讀回來一次 —— 所以手機上記的那條，在這裡也看得見。每次推送前，將要被覆蓋的那份會在資料目錄裡留一個副本，一天最多三份。",
   "Type the passphrase first.":"先填口令。",
-  "Reading the workbench…":"正在讀取工作台…",
   "The passphrase did not open the workbench.":"這個口令打不開工作台。",
-  "Pushed. The workbench will show it after its next sync.":"已推送。工作台下次同步後就能看到。",
   "No CyberBrain account id is set.":"還沒有填賽博大腦帳號 ID（帳戶頁）。",
-  "This window cannot encrypt, so nothing was sent.":"這個視窗無法加密，所以什麼都沒送出去。",
   "No date":"沒有截止時間",
   "Overdue by {t}":"已逾期 {t}",
   "Due in {t}":"還剩 {t}",
@@ -994,14 +1054,27 @@ const JA_STATIC = {
   "Delete":"削除",
   "Passphrase":"パスフレーズ",
   "The workbench's passphrase":"ワークベンチのパスフレーズ",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"ワークベンチの記録はブラウザを出る前に暗号化されます。そこへ足すには同じファイルを開ける必要があるため、ワークベンチで入力するパスフレーズをここに入れます。このウィンドウだけで使い、ディスクには書きません。設定を閉じれば消えます。",
-  "Push to CyberBrain":"CyberBrain へ送る",
+  "Remember it":"覚えておく",
+  "Forget it":"忘れる",
+  "Sync now":"今すぐ同期",
+  "Last sync":"前回の同期",
+  "Not yet":"まだ",
+  "Remembered":"記憶済み",
+  "Not remembered":"未記憶",
+  "No passphrase remembered, so nothing is synced.":"パスフレーズを覚えていないため、同期は行われません。",
+  "Could not reach the gateway. It will try again.":"ゲートウェイに届きませんでした。あとで再試行します。",
+  "Sync failed.":"同期に失敗しました。",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"workbench が返したファイルをこのビルドでは読めないため、何も変更していません。",
+  "The sync stopped on this machine. Nothing was sent or changed.":"この PC で同期が止まりました。何も送信も変更もしていません。",
+  "Syncing…":"同期中…",
+  "Waiting to push.":"送信待ちです。",
+  "Synced.":"同期済み。",
+  "Remembered. It syncs on its own.":"覚えました。あとは自動で同期します。",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"workbench を開くためのパスフレーズです。Windows の資格情報マネージャーに、この Windows アカウントのものとして保存され、いつでも確認・削除できます。パスフレーズ自体はどこにも送られません。ゲートウェイに送るのは、それが作った暗号文だけです。",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"パスフレーズを覚えている間、追加した・済ませたタスクは、手が止まって数秒後に送信されます。さらに5分ごとに workbench を読み直すので、スマホで追加したものもここに現れます。送信のたびに、上書きされる内容の控えがデータフォルダーに残ります（1日3件まで）。",
   "Type the passphrase first.":"先にパスフレーズを入力してください。",
-  "Reading the workbench…":"ワークベンチを読んでいます…",
   "The passphrase did not open the workbench.":"このパスフレーズでは開けませんでした。",
-  "Pushed. The workbench will show it after its next sync.":"送信しました。次の同期でワークベンチに現れます。",
   "No CyberBrain account id is set.":"CyberBrain のアカウント ID が未設定です。",
-  "This window cannot encrypt, so nothing was sent.":"このウィンドウでは暗号化できないため、送信していません。",
   "No date":"締切なし",
   "Overdue by {t}":"{t} 超過",
   "Due in {t}":"あと {t}",
@@ -1157,14 +1230,27 @@ const KO_STATIC = {
   "Delete":"삭제",
   "Passphrase":"암호",
   "The workbench's passphrase":"워크벤치 암호",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"워크벤치 기록은 브라우저를 떠나기 전에 암호화됩니다. 거기에 한 줄을 더하려면 같은 파일을 열어야 하므로, 워크벤치에서 쓰는 암호를 여기에 넣습니다. 이 창에서만 쓰고 디스크에 쓰지 않으며, 설정을 닫으면 사라집니다.",
-  "Push to CyberBrain":"CyberBrain으로 보내기",
+  "Remember it":"기억하기",
+  "Forget it":"잊기",
+  "Sync now":"지금 동기화",
+  "Last sync":"마지막 동기화",
+  "Not yet":"아직",
+  "Remembered":"기억됨",
+  "Not remembered":"기억 안 됨",
+  "No passphrase remembered, so nothing is synced.":"암호를 기억하지 않아 동기화되지 않습니다.",
+  "Could not reach the gateway. It will try again.":"게이트웨이에 닿지 못했습니다. 나중에 다시 시도합니다.",
+  "Sync failed.":"동기화하지 못했습니다.",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"workbench가 이 빌드에서 읽을 수 없는 파일을 돌려주어 아무것도 바꾸지 않았습니다.",
+  "The sync stopped on this machine. Nothing was sent or changed.":"이 PC에서 동기화가 멈췄습니다. 아무것도 보내지 않았고 바꾸지도 않았습니다.",
+  "Syncing…":"동기화 중…",
+  "Waiting to push.":"보내기 기다리는 중입니다.",
+  "Synced.":"동기화됨.",
+  "Remembered. It syncs on its own.":"기억했습니다. 이후 자동으로 동기화합니다.",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"workbench를 여는 암호입니다. Windows 자격 증명 관리자에 이 Windows 계정으로 저장되며, 언제든 확인하거나 지울 수 있습니다. 암호 자체는 어디로도 전송되지 않고, 게이트웨이로는 그것이 만든 암호문만 갑니다.",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"암호를 기억해 두면, 추가하거나 완료한 할 일이 손을 멈춘 몇 초 뒤에 올라가고, 5분마다 workbench를 다시 읽어 오므로 휴대폰에서 추가한 것도 여기에 나타납니다. 올리기 전마다 덮어쓸 내용의 사본이 데이터 폴더에 남습니다. 하루 세 개까지.",
   "Type the passphrase first.":"먼저 암호를 넣어 주세요.",
-  "Reading the workbench…":"워크벤치를 읽는 중…",
   "The passphrase did not open the workbench.":"이 암호로는 열리지 않습니다.",
-  "Pushed. The workbench will show it after its next sync.":"보냈습니다. 다음 동기화 뒤 워크벤치에 나타납니다.",
   "No CyberBrain account id is set.":"CyberBrain 계정 ID가 없습니다.",
-  "This window cannot encrypt, so nothing was sent.":"이 창에서는 암호화할 수 없어 아무것도 보내지 않았습니다.",
   "No date":"마감 없음",
   "Overdue by {t}":"{t} 지남",
   "Due in {t}":"{t} 남음",
@@ -1335,14 +1421,27 @@ const UK_STATIC = {
   "Delete":"Видалити",
   "Passphrase":"Пароль",
   "The workbench's passphrase":"Пароль робочого столу",
-  "The workbench's records are encrypted before they leave the browser. To add a to-do to them, Codenotch has to unlock that same file, so this is the passphrase you type there. It is used in this window only: it is not written to disk and it does not survive closing Settings.":"Записи робочого столу шифруються до того, як залишити браузер. Щоб додати туди справу, Codenotch має відкрити той самий файл, тому тут потрібен пароль, який ви вводите там. Він використовується лише в цьому вікні: не пишеться на диск і зникає після закриття налаштувань.",
-  "Push to CyberBrain":"Надіслати в CyberBrain",
+  "Remember it":"Запам'ятати",
+  "Forget it":"Забути",
+  "Sync now":"Синхронізувати",
+  "Last sync":"Остання синхронізація",
+  "Not yet":"Ще ні",
+  "Remembered":"Запам'ятовано",
+  "Not remembered":"Не запам'ятовано",
+  "No passphrase remembered, so nothing is synced.":"Пароль не запам'ятовано, тому синхронізації немає.",
+  "Could not reach the gateway. It will try again.":"Не вдалося зв'язатися зі шлюзом. Спробує ще раз.",
+  "Sync failed.":"Синхронізація не вдалася.",
+  "The workbench returned a file this build cannot read, so nothing was changed.":"Workbench повернув файл, який ця збірка не може прочитати, тому нічого не змінено.",
+  "The sync stopped on this machine. Nothing was sent or changed.":"Синхронізація зупинилася на цій машині. Нічого не надіслано й не змінено.",
+  "Syncing…":"Синхронізація…",
+  "Waiting to push.":"Чекає надсилання.",
+  "Synced.":"Синхронізовано.",
+  "Remembered. It syncs on its own.":"Запам'ятовано. Далі сама.",
+  "The passphrase that unlocks the workbench. It is kept in Windows Credential Manager, under your own Windows account, where you can see it or delete it. It never travels anywhere: what goes to the gateway is only the encrypted file it produces.":"Пароль, який відкриває workbench. Він зберігається в диспетчері облікових даних Windows під вашим обліковим записом — там його можна подивитися або видалити. Назовні він не йде: до шлюзу надходить лише зашифрований файл, який він створює.",
+  "While the passphrase is remembered, a to-do you add or tick off is pushed a few seconds after you stop, and every five minutes Codenotch reads the workbench back — so one added on the phone turns up here too. Before each push a copy of what is about to be replaced is kept in the data folder, three a day at most.":"Поки пароль запам'ятовано, справа, яку ви додали або позначили, надходить за кілька секунд після того, як ви зупинилися, а кожні п'ять хвилин Codenotch перечитує workbench — тож справа, додана з телефона, теж з'явиться тут. Перед кожним надсиланням у теці даних лишається копія того, що буде замінено, не більше трьох на день.",
   "Type the passphrase first.":"Спершу введіть пароль.",
-  "Reading the workbench…":"Читаю робочий стіл…",
   "The passphrase did not open the workbench.":"Цей пароль не відкриває робочий стіл.",
-  "Pushed. The workbench will show it after its next sync.":"Надіслано. Робочий стіл покаже це після наступної синхронізації.",
   "No CyberBrain account id is set.":"Не задано id облікового запису CyberBrain.",
-  "This window cannot encrypt, so nothing was sent.":"Це вікно не може шифрувати, тому нічого не надіслано.",
   "No date":"Без терміну",
   "Overdue by {t}":"прострочено на {t}",
   "Due in {t}":"через {t}",
@@ -2579,9 +2678,9 @@ boot();
 
    两边读同一份数据（src/todos.rs）：这一页改完，notch 收到 todos 事件就跟着变。
 
-   推送这一段做的是和赛博大脑网页完全一样的加解密：PBKDF2(口令, 盐='aiwb-enc-v1:'+uid,
-   12 万次) → AES-GCM 256，云端只存密文。口令只用在这个窗口里，不落盘、关窗即清 ——
-   它是那把能打开工作台全部记录的钥匙，没有理由在关掉这一页之后还留在内存里。 */
+   同步这一段只做三件事：把口令交出去、把它忘掉、把状态说成人话。真正的
+   「拉 → 解密 → 合并 → 加密 → 推」在 src/brain.rs 的后台线程里，和「立即同步」按钮
+   走同一个函数 —— 手动和自动各写一套合并规则，迟早会分叉成两个答案。 */
 const TD = {
   title: document.getElementById('td-title'),
   date: document.getElementById('td-date'),
@@ -2592,10 +2691,15 @@ const TD = {
   segLevel: document.getElementById('seg-level'),
   auto: document.getElementById('sw-auto'),
   pass: document.getElementById('td-pass'),
-  push: document.getElementById('td-push'),
-  pushNote: document.getElementById('td-push-note')
+  passWho: document.getElementById('td-pass-who'),
+  passSave: document.getElementById('td-pass-save'),
+  passForget: document.getElementById('td-pass-forget'),
+  when: document.getElementById('td-sync-when'),
+  syncNow: document.getElementById('td-sync-now'),
+  syncNote: document.getElementById('td-sync-note')
 };
-let todoView = null, todoRaw = [], tdLevel = '';
+let todoView = null, tdLevel = '';
+let tdSync = { state:'off', lastOk:0, error:'', code:'', pending:false, saved:false };
 
 // 时长单位：STATIC_TEXT 只放字符串，放不了函数，所以这一小张表单独写在这里。
 const TD_UNITS = {
@@ -2639,7 +2743,6 @@ function tdRender(){
 }
 function tdRefresh(){
   return invoke('get_todos').then(v => { if(v) todoView = v; tdRender(); })
-    .then(() => invoke('get_todos_raw')).then(rows => { todoRaw = Array.isArray(rows) ? rows : []; })
     .catch(e => strip('get_todos failed: ' + errText(e)));
 }
 
@@ -2682,81 +2785,76 @@ TD.list.addEventListener('click', e => {
     .catch(err => strip('delete_todo failed: ' + errText(err)));
 });
 
-/* ---- 推送：和工作台网页同一套加密 -------------------------------------- */
-const B64 = u => { let s = ''; for(let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
-const UNB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-function tdKey(pass, uid){
-  const enc = new TextEncoder();
-  return crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey'])
-    .then(base => crypto.subtle.deriveKey(
-      {name:'PBKDF2', salt: enc.encode('aiwb-enc-v1:' + uid), iterations: 120000, hash:'SHA-256'},
-      base, {name:'AES-GCM', length:256}, false, ['encrypt', 'decrypt']));
-}
-// 按 id 合并，取较新的一条 —— 和 todos.rs 的 merge_for_push 同一个规则。
-// 云端独有的条目原样留着：这次推送不该顺手删掉手机上记的东西。
-// `pushed` / `remote` 是本机才知道的两个标记（谁数过它、它是读来的还是记下来的），
-// 出去之前摘掉：工作台不认识它们，留着只是往别人的记录里塞噪音。
-function tdMerge(cloud, local){
-  const stamp = t => { const v = Date.parse(t && t.updatedAt || ''); return isNaN(v) ? 0 : v; };
-  const clean = t => { const o = Object.assign({}, t); delete o.pushed; delete o.remote; return o; };
-  const out = (cloud || []).map(clean);
-  for(const mine of local || []){
-    const at = out.findIndex(t => t && t.id === mine.id);
-    if(at < 0) out.push(clean(mine));
-    else if(stamp(mine) >= stamp(out[at])) out[at] = clean(mine);
-  }
-  return out;
-}
-TD.push.addEventListener('click', () => {
-  const pass = TD.pass.value;
-  if(!pass){ TD.pushNote.textContent = ui('Type the passphrase first.','Type the passphrase first.'); return; }
-  if(!(window.crypto && crypto.subtle)){
-    TD.pushNote.textContent = ui('This window cannot encrypt, so nothing was sent.','This window cannot encrypt, so nothing was sent.');
-    return;
-  }
-  TD.push.disabled = true;
-  TD.pushNote.textContent = ui('Reading the workbench…','Reading the workbench…');
-  invoke('get_brain_uid').then(uid => {
-    const id = String(uid || '').trim();
-    if(!id) throw new Error(ui('No CyberBrain account id is set.','No CyberBrain account id is set.'));
-    return tdKey(pass, id).then(key => invoke('brain_pull_config').then(wrap => ({key, wrap})));
-  }).then(({key, wrap}) => {
-    // 没有云端那份就从一个空配置开始：工作台那边会是「第一次同步」的样子
-    const opening = (wrap && wrap.__enc === 1)
-      ? crypto.subtle.decrypt({name:'AES-GCM', iv: UNB64(wrap.iv)}, key, UNB64(wrap.ct))
-          .then(buf => JSON.parse(new TextDecoder().decode(buf)))
-          .catch(() => {
-            const err = new Error(ui('The passphrase did not open the workbench.','The passphrase did not open the workbench.'));
-            err.code = 'BAD_PASSPHRASE';
-            throw err;
-          })
-      : Promise.resolve({});
-    return opening.then(cfg => {
-      const next = (cfg && typeof cfg === 'object') ? cfg : {};
-      next.todos = tdMerge(next.todos, todoRaw);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      return crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(JSON.stringify(next)))
-        .then(buf => ({iv, buf}));
-    });
-  }).then(({iv, buf}) => invoke('brain_push_config', {iv: B64(iv), ct: B64(new Uint8Array(buf))})
-      .then(() => invoke('mark_todos_pushed')))
-  .then(view => {
-    if(view) todoView = view;
-    TD.pass.value = '';
-    TD.pushNote.textContent = ui('Pushed. The workbench will show it after its next sync.','Pushed. The workbench will show it after its next sync.');
-    return tdRefresh().then(tdRender);
-  })
-  .catch(e => {
-    TD.pushNote.textContent = (e && e.code === 'BAD_PASSPHRASE')
-      ? ui('The passphrase did not open the workbench.','The passphrase did not open the workbench.')
-      : errText(e);
-  })
-  .finally(() => { TD.push.disabled = false; });
-});
+/* ---- 同步：口令记在 Windows 凭据管理器里，加解密在 Rust 里 ---------------- */
+// 这一页不碰密钥。口令交出去之后由 brain.rs 用 PBKDF2 + AES-GCM 打开云端那份，
+// 所以关掉设置页不影响自动同步 —— 这正是上一版做不到的事：执行者只有这一页，
+// 页面一关，就没人能推了。
 
-function initTodos(){ tdLoadFlags().then(tdRefresh); }
+// 一句状态说成人话。`s` 是 brain::SyncState 的 camelCase 投影。
+function tdSyncLine(s){
+  if(!s || !s.saved) return ui('No passphrase remembered, so nothing is synced.','No passphrase remembered, so nothing is synced.');
+  if(s.state === 'error'){
+    if(s.code === 'badpass') return ui('The passphrase did not open the workbench.','The passphrase did not open the workbench.');
+    if(s.code === 'nouid') return ui('No CyberBrain account id is set.','No CyberBrain account id is set.');
+    if(s.code === 'net') return ui('Could not reach the gateway. It will try again.','Could not reach the gateway. It will try again.');
+    if(s.code === 'shape') return ui('The workbench returned a file this build cannot read, so nothing was changed.','The workbench returned a file this build cannot read, so nothing was changed.');
+    if(s.code === 'local') return ui('The sync stopped on this machine. Nothing was sent or changed.','The sync stopped on this machine. Nothing was sent or changed.');
+    return s.error || ui('Sync failed.','Sync failed.');
+  }
+  if(s.state === 'working') return ui('Syncing…','Syncing…');
+  if(s.pending) return ui('Waiting to push.','Waiting to push.');
+  if(s.lastOk) return ui('Synced.','Synced.');
+  return ui('Remembered. It syncs on its own.','Remembered. It syncs on its own.');
+}
+// 只报时分。跨天的那种「昨天 12:03」需要一张语言表，而这里要说的事只有「新不新」。
+function tdSyncWhen(sec){
+  if(!sec) return ui('Not yet','Not yet');
+  const d = new Date(sec * 1000);
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+function tdRenderSync(){
+  const s = tdSync || {};
+  if(TD.passWho) TD.passWho.textContent = s.saved ? ui('Remembered','Remembered') : ui('Not remembered','Not remembered');
+  if(TD.passSave) TD.passSave.hidden = !!s.saved;
+  if(TD.passForget) TD.passForget.hidden = !s.saved;
+  if(TD.when) TD.when.textContent = tdSyncWhen(s.lastOk);
+  if(TD.syncNote){
+    TD.syncNote.textContent = tdSyncLine(s);
+    TD.syncNote.style.color = (s.state === 'error') ? 'var(--danger)' : '';
+  }
+}
+function tdRefreshSync(){
+  return invoke('get_brain_sync').then(s => { if(s) tdSync = s; tdRenderSync(); })
+    .catch(e => strip('get_brain_sync failed: ' + errText(e)));
+}
+
+if(TD.passSave) TD.passSave.addEventListener('click', () => {
+  const pass = TD.pass.value;
+  if(!pass){ TD.syncNote.textContent = ui('Type the passphrase first.','Type the passphrase first.'); return; }
+  TD.passSave.disabled = true;
+  invoke('set_brain_pass', {pass}).then(s => { if(s) tdSync = s; TD.pass.value = ''; return tdRefreshSync(); })
+    .catch(e => { TD.syncNote.textContent = errText(e); })
+    .finally(() => { TD.passSave.disabled = false; });
+});
+if(TD.passForget) TD.passForget.addEventListener('click', () => {
+  invoke('forget_brain_pass').then(s => { if(s) tdSync = s; return tdRefreshSync(); })
+    .catch(e => strip('forget_brain_pass failed: ' + errText(e)));
+});
+if(TD.syncNow) TD.syncNow.addEventListener('click', () => {
+  TD.syncNow.disabled = true;
+  TD.syncNote.textContent = ui('Syncing…','Syncing…');
+  invoke('brain_sync_now').then(s => { if(s) tdSync = s; return tdRefreshSync(); })
+    .then(() => tdRefresh())
+    .catch(e => { TD.syncNote.textContent = errText(e); })
+    .finally(() => { TD.syncNow.disabled = false; });
+});
+// 后台线程推完会广播一次，这一页不用轮询
+try {
+  window.__TAURI__.event.listen('brain_sync', e => { if(e.payload){ tdSync = e.payload; tdRenderSync(); } });
+} catch(e) { /* 下次获得焦点时再读一次 */ }
+function initTodos(){ tdLoadFlags().then(tdRefresh); tdRefreshSync(); }
 initTodos();
-window.addEventListener('focus', () => { tdRefresh(); });
+window.addEventListener('focus', () => { tdRefresh(); tdRefreshSync(); });
 
 </script>
 </body>

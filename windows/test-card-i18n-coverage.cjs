@@ -147,11 +147,17 @@ test('Every settings language can word the to-do pane', () => {
   const keys = ["'To-do'", "'The list'", "'Sort'", "'Due first'", "'Priority first'",
     "'Open the card as a deadline nears'", "'Add'", "'What needs doing?'", "'Due'", "'Priority'",
     "'None'", "'High'", "'Medium'", "'Low'", "'A to-do needs a title.'", "'On the notch'",
-    "'No open to-dos.'", "'Delete'", "'Passphrase'", "'Push to CyberBrain'",
-    "'Type the passphrase first.'", "'Reading the workbench…'",
-    "'The passphrase did not open the workbench.'",
-    "'Pushed. The workbench will show it after its next sync.'",
-    "'No CyberBrain account id is set.'", "'This window cannot encrypt, so nothing was sent.'",
+    "'No open to-dos.'", "'Delete'", "'Passphrase'",
+    // 同步区：状态一句话就有十四种说法，漏一条只会在某种语言里冒出一句英文
+    "'Remember it'", "'Forget it'", "'Sync now'", "'Last sync'", "'Not yet'",
+    "'Remembered'", "'Not remembered'", "'Synced.'", "'Waiting to push.'", "'Syncing…'",
+    "'Sync failed.'", "'No passphrase remembered, so nothing is synced.'",
+    "'Could not reach the gateway. It will try again.'",
+    "'The workbench returned a file this build cannot read, so nothing was changed.'",
+    "'The sync stopped on this machine. Nothing was sent or changed.'",
+    "'Remembered. It syncs on its own.'",
+    "'The passphrase did not open the workbench.'", "'No CyberBrain account id is set.'",
+    "'Type the passphrase first.'",
     "'No date'", "'Overdue by {t}'", "'Due in {t}'"];
   const names = ['PT_BR', 'RU', 'ZH', 'ZH_HANT', 'JA', 'KO', 'UK'];
   for (const name of names) {
@@ -162,6 +168,23 @@ test('Every settings language can word the to-do pane', () => {
       const bare = key.slice(1, -1);
       assert.ok(table.includes("'" + bare + "':") || table.includes('"' + bare + '":'),
         `the ${name} table has no ${key}`);
+    }
+  }
+});
+
+test('The two sync captions are translated word for word', () => {
+  // 这两句是这一页最长的英文，而且不走 ui()：applyStaticUi 是逐字匹配整个 text node 的，
+  // 所以英文改了一个词、七张表没跟着改，整段就静默退回英文 —— 没有任何地方会报错。
+  // 断言直接从 HTML 里取原文，而不是在测试里抄一份：抄的那份会和 HTML 一起变旧。
+  const captions = [...settings.matchAll(/<div class="item cap">((?:The passphrase |While the passphrase )[^<]*)<\/div>/g)]
+    .map(m => m[1].replace(/\s+/g, ' ').trim());
+  assert.equal(captions.length, 2, 'the to-do pane should carry two sync captions');
+  const names = ['PT_BR', 'RU', 'ZH', 'ZH_HANT', 'JA', 'KO', 'UK'];
+  for (const name of names) {
+    const table = block(settings, `const ${name}_STATIC = {\n`, '\n};\n');
+    for (const text of captions) {
+      assert.ok(table.includes('"' + text + '":'),
+        `the ${name} table has no caption starting "${text.slice(0, 40)}"`);
     }
   }
 });

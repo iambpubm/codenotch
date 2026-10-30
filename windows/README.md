@@ -37,7 +37,7 @@ Providers that are not installed simply do not get a cell. A config saved with t
 | **z.ai (GLM)** | The existing Z.AI tool credentials — the GLM Coding Plan key in the environment, in the CLI's config, or in a `~/.claude/settings.json` that points `ANTHROPIC_BASE_URL` at a Z.ai console | The plan's session / weekly windows. |
 | **Antigravity** | Official `agy` CLI `/usage` print when installed; otherwise the existing local `language_server` bridge, Google Cloud Code API, or transcript model count | Official four quota rows (Gemini & Claude/GPT 5h/weekly) without running the full IDE. When CLI is absent, falls back to legacy local bridge/API. |
 | **CyberBrain** | One aggregate snapshot that a CyberBrain workbench publishes itself, read over its cloud gateway for the account id set in Settings | Overdue items and delivery warnings as two rings below a hairline separator. They are business counts, not allowances, so nothing is filled in: the ring frames the number and the colour carries the judgement, and the hover card lists the items behind it. The workbench rewrites the snapshot only while it is open, so a reading can be hours old and the card says when it was pushed. Nothing else about the workbench is readable from here. |
-| **To-do** | A local list in the workbench's record shape, plus the items in its snapshot | One ring for everything still open, with its arc showing how close the nearest deadline is. The card lists the items, ticks them off on click, opens itself as a deadline nears — taller the closer it gets — and its **+** opens a one-field window beside the pill for writing a new one. The sort order, dates beyond tomorrow and pushing the list up to CyberBrain are in Settings. |
+| **To-do** | A local list in the workbench's record shape, plus the items in its snapshot | One ring for everything still open, with its arc showing how close the nearest deadline is. The card lists the items, ticks them off on click, opens itself as a deadline nears — taller the closer it gets — and its **+** opens a one-field window beside the pill for writing a new one. The sort order, dates beyond tomorrow and the CyberBrain passphrase are in Settings; once the passphrase is remembered the list keeps itself in sync in both directions. |
 
 The working-state arc (the thin spinning line inside a ring, the amber pulse when something
 wants your input, and the green pulse when a run has just finished) is drawn for every provider
@@ -426,12 +426,30 @@ to-do as overdue only once the date has passed, and two readers of one list must
 what "due today" means. Deleting is a soft flag rather than a removal, so a deletion can travel to
 the other side instead of the record coming back on the next pull.
 
-**Push to CyberBrain** merges local items into the workbench's config by id, newer wins, then
-uploads the whole file the way the workbench itself does. That file is end-to-end encrypted, so the
-passphrase is typed in Settings and used there — in the page's WebCrypto, never in the Rust side,
-and never written to disk. The ciphertext that would be overwritten is kept first, up to twenty
-copies, under `%APPDATA%\codenotch\brain-backup\`; it is ciphertext, so leaving it there is no more
-exposure than the cloud itself. The local list lives in `%APPDATA%\codenotch\todos.json`.
+**Syncing with CyberBrain** happens on its own once the passphrase has been remembered. A to-do you
+add or tick off is pushed a few seconds after you stop changing things, so a run of three edits makes
+one upload rather than three; every five minutes the workbench is read back, so one added on the
+phone turns up here as well. Both directions merge by id with newer winning, and the result is
+uploaded whole the way the workbench itself does it.
+
+The passphrase is the workbench's, which means it unwraps the workbench's entire record — customers,
+orders and payments included, not just the to-dos. It is stored in Windows Credential Manager under
+your own Windows account, where you can look at it or delete it; it is never written into this
+project's config and it never travels: what reaches the gateway is only the ciphertext it produces.
+Against a copied `%APPDATA%` folder it is no more exposed than before.
+
+Encryption lives in Rust (`ring`: PBKDF2-SHA256, 120,000 rounds, AES-256-GCM), not in the page as it
+first was. That is what makes automatic syncing possible at all — the page only exists while Settings
+is open, so a page could never be the thing that pushes on a timer. A test pins the Rust output
+against a ciphertext WebCrypto produced, so the two cannot drift apart without CI saying so. `ring`
+and `base64` were both already in `Cargo.lock` through `rustls`, so this adds no new dependency to
+fetch and nothing to the build time.
+
+Because a push replaces the whole file and the workbench writes that same file itself, nothing is
+uploaded unless this machine actually has a change to send: a plain pull never writes. Before each
+write the ciphertext about to be replaced is kept under `%APPDATA%\codenotch\brain-backup\`, three a
+day at most — it is ciphertext, so leaving it there is no more exposure than the cloud itself. The
+local list lives in `%APPDATA%\codenotch\todos.json`.
 
 ## Install / build
 
