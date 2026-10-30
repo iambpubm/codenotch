@@ -49,6 +49,10 @@ pub fn hide(app: &AppHandle) {
 
 fn open_now(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
+        // This window outlives a theme change, and a page cannot notice one by itself: WebView2's
+        // own colour scheme does not follow a live change, which is why every page here is told.
+        let theme = crate::resolved_theme(app);
+        let _ = w.eval(&format!("document.documentElement.dataset.theme={theme:?}"));
         // What was typed last time is not what is being typed now
         let _ = w.emit("quick_reset", ());
         place(app, &w);
