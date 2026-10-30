@@ -2694,13 +2694,16 @@ function tdKey(pass, uid){
 }
 // 按 id 合并，取较新的一条 —— 和 todos.rs 的 merge_for_push 同一个规则。
 // 云端独有的条目原样留着：这次推送不该顺手删掉手机上记的东西。
+// `pushed` / `remote` 是本机才知道的两个标记（谁数过它、它是读来的还是记下来的），
+// 出去之前摘掉：工作台不认识它们，留着只是往别人的记录里塞噪音。
 function tdMerge(cloud, local){
   const stamp = t => { const v = Date.parse(t && t.updatedAt || ''); return isNaN(v) ? 0 : v; };
-  const out = (cloud || []).slice();
+  const clean = t => { const o = Object.assign({}, t); delete o.pushed; delete o.remote; return o; };
+  const out = (cloud || []).map(clean);
   for(const mine of local || []){
     const at = out.findIndex(t => t && t.id === mine.id);
-    if(at < 0) out.push(mine);
-    else if(stamp(mine) >= stamp(out[at])) out[at] = mine;
+    if(at < 0) out.push(clean(mine));
+    else if(stamp(mine) >= stamp(out[at])) out[at] = clean(mine);
   }
   return out;
 }
