@@ -72,6 +72,19 @@ jobs:
       - name: Test the quick-add window's wiring
         run: node --test test-quick-add.cjs
 
+      # The card opens itself when a deadline is close, and three clocks push that around: the
+      # 20-second recompute, the 300ms watchdog and the 450ms fold grace. Two of them used to
+      # disagree, and the card flickered every 20 seconds while the pill stopped hiding. The state
+      # machine is lifted out of notch.html and run here rather than reimplemented.
+      - name: Test the self-opening card
+        run: node --test test-autocard.cjs
+
+      # The done list names things that only agree at runtime: the page's invoke, the command
+      # signature and the handler list. A typo in any of them is not a compile error — the button
+      # simply does nothing, which is exactly the bug this round fixed.
+      - name: Test the done list's wiring
+        run: node --test test-done-list.cjs
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

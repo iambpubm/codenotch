@@ -818,6 +818,13 @@ fn todo_view(app: &AppHandle) -> todos::View {
     // 拉过云端那一份之后，清单用的是真正解出来的条目 —— 它有 `date`、有 `level`，
     // 比工作台快照里那几行（只有标题和日期）全得多。还没拉过就退回快照。
     let remote = if pulled.is_empty() { remote_todos(&brain) } else { pulled };
+    // 落地过的条目两边都有：本地那份才是能改的，只读这半按 id 剔掉 —— 比「标题 + 日期」
+    // 认重更准，改了标题也认得出来。
+    let local_ids: std::collections::HashSet<&str> = items.iter().map(|t| t.id.as_str()).collect();
+    let remote: Vec<todos::Todo> = remote
+        .into_iter()
+        .filter(|t| !local_ids.contains(t.id.as_str()))
+        .collect();
     // 没配 uid（status none）就是没有远程那半，0 是实话；读失败时保留上一次的读数，
     // 和三个计数环的口径一致 —— 「查不到」不等于「没有」。
     let (count, overdue) = if brain.status == "none" {
@@ -867,6 +874,42 @@ fn get_todos(app: AppHandle) -> todos::View {
 
 fn stamp_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// 把一条「只在云端」的待办落成本地记录，好让它能被勾选、改期、删除。
+///
+/// 卡片里那些来自工作台的条目不是编出来的：`brain::run_once` 解开云端整份 config 时，
+/// 命中的条目带着工作台自己的 id 和全部字段，只是没写进 `todos.json` —— 写进去，下一次
+/// 合并就会把它当成「本机新记的」再推一遍，云端于是多出一条同 id 的记录。
+///
+/// 真要动它的时候，这个理由就反过来了：不落地，`toggle_todo` 在本机找不到它，点了没反应。
+/// 落地时 `pushed` 置真 —— 它本来就在云上，不是本机新记的，环上的数字不能多算一次。
+/// 快照里那条**不删**：留着，`todo_view` 按 id 把它从只读那半剔掉就够了。删掉会让
+/// `brain_todos` 变成空，而空在这里的意思是「还没拉过」，于是又退回工作台概览那一份。
+fn materialize(app: &AppHandle, id: &str) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    // 先 todos 后 brain_todos：和 `todo_view` 同一个顺序，两把锁不会互相等
+    let mut store = st.todos.lock().unwrap();
+    if store.items.iter().any(|t| t.id == id) {
+        return Ok(());
+    }
+    let found = {
+        let pulled = st.brain_todos.lock().unwrap();
+        pulled.iter().find(|t| t.id == id).cloned()
+    };
+    let Some(mut item) = found else {
+        // 工作台快照兜底那条路编出来的 id 是 `remote:N`：没有真 id，改不了，
+        // 只能等一次同步把真正解出来的那份拉下来。
+        return Err(if id.starts_with("remote:") {
+            "这条只是工作台的概览：先在设置里同步一次，就能勾了".into()
+        } else {
+            "没有这条待办".into()
+        });
+    };
+    item.remote = false;
+    item.pushed = true;
+    store.items.push(item);
+    todos::save(&store).map_err(|e| format!("保存失败：{e}"))
 }
 
 #[tauri::command]
@@ -922,6 +965,7 @@ fn update_todo(
     if title.is_empty() {
         return Err("标题不能为空".into());
     }
+    materialize(&app, &id)?;
     {
         let st = app.state::<AppState>();
         let mut store = st.todos.lock().unwrap();
@@ -949,6 +993,18 @@ fn update_todo(
 
 #[tauri::command]
 fn toggle_todo(app: AppHandle, id: String) -> Result<todos::View, String> {
+    set_done(app, id, None)
+}
+
+/// 明确的设值版。设置页的「恢复」用它，不靠翻转 —— 连点两下不该来回跳。
+#[tauri::command]
+fn set_todo_done(app: AppHandle, id: String, done: bool) -> Result<todos::View, String> {
+    set_done(app, id, Some(done))
+}
+
+/// 卡片上的勾和设置页的恢复走同一条路：先落地（云端条目），再改状态，再存盘、标脏、广播。
+fn set_done(app: AppHandle, id: String, done: Option<bool>) -> Result<todos::View, String> {
+    materialize(&app, &id)?;
     {
         let st = app.state::<AppState>();
         let mut store = st.todos.lock().unwrap();
@@ -957,7 +1013,7 @@ fn toggle_todo(app: AppHandle, id: String) -> Result<todos::View, String> {
             .iter_mut()
             .find(|t| t.id == id)
             .ok_or_else(|| "没有这条待办".to_string())?;
-        item.done = !item.done;
+        item.done = done.unwrap_or(!item.done);
         item.updated_at = stamp_now();
         todos::save(&store).map_err(|e| format!("保存失败：{e}"))?;
     }
@@ -968,6 +1024,7 @@ fn toggle_todo(app: AppHandle, id: String) -> Result<todos::View, String> {
 /// 下次拉取就会复活 —— 工作台自己也因为这个理由改了软删除。
 #[tauri::command]
 fn delete_todo(app: AppHandle, id: String) -> Result<todos::View, String> {
+    materialize(&app, &id)?;
     {
         let st = app.state::<AppState>();
         let mut store = st.todos.lock().unwrap();
@@ -1541,7 +1598,10 @@ const LEAVE_MS: u64 = 300;
 fn start_pointer_watchdog(app: AppHandle) {
     std::thread::spawn(move || {
         let need = (LEAVE_MS / WATCHDOG_MS).max(1) as u8;
+        // 心跳间隔，按看门狗的节拍算：2 秒。（局部项的 `///` 会被当成放错地方的文档注释）
+        const BEAT_TICKS: u32 = (2000 / WATCHDOG_MS) as u32;
         let mut miss = 0u8;
+        let mut beat = 0u32;
         // Last value pushed: this changes only when the cursor crosses an edge
         let mut click_through: Option<bool> = None;
         loop {
@@ -1558,6 +1618,7 @@ fn start_pointer_watchdog(app: AppHandle) {
             if click_through != Some(!inside) {
                 set_click_through(&app, !inside);
                 click_through = Some(!inside);
+                beat = 0;
                 // Show on hover opens on this and folds a moment after it goes false. The page cannot
                 // tell on its own: once click-through is back on, it is sent nothing at all.
                 let _ = app.emit_to("notch", "notch_pointer", inside);
@@ -1565,6 +1626,16 @@ fn start_pointer_watchdog(app: AppHandle) {
                     "click-through {} at cursor_rel=({lx:.0},{ly:.0}) rects={rects:?}",
                     if inside { "off (cursor on the notch)" } else { "on (cursor elsewhere)" }
                 ));
+            } else {
+                // 心跳。页面靠 `pointerIn` 判断「指针还在不在条子上」，而这一位过去只在**变化时**
+                // 发一次：页面只要错过一条（重载、监听注册晚了、或者卡片自己撑开让热区变了），
+                // 就会一直以为指针还在，`foldAllowed()` 永远为假 —— 侧边栏再也不自动隐藏。
+                // 每两秒补一次当前值，页面只认值的变化，所以这一发不会反复重启折叠计时器。
+                beat += 1;
+                if beat >= BEAT_TICKS {
+                    beat = 0;
+                    let _ = app.emit_to("notch", "notch_pointer", inside);
+                }
             }
 
             static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -2663,6 +2734,7 @@ fn main() {
             add_todo,
             update_todo,
             toggle_todo,
+            set_todo_done,
             delete_todo,
             open_quick_add,
             close_quick,

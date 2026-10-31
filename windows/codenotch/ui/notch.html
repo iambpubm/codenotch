@@ -1703,7 +1703,7 @@ function todoRowHtml(row){
   const level=row.level==='高'?CRIT:row.level==='低'?DIM:row.level==='中'?WATCH:'';
   // 时间条画的是「已经过去了多少」，不是「做完了多少」：逾期满格，没截止时间的不画。
   const bar=row.left==null?'':`<div class="t-bar"><i style="width:${Math.round(Math.min(1,row.progress)*100)}%;background:${row.left<0?CRIT:tone(Math.min(1,row.progress))}"></i></div>`;
-  return `<div class="t-row${row.done?' done':''}" data-todo="${esc(row.id)}"${row.remote?' data-readonly="1"':''}>
+  return `<div class="t-row${row.done?' done':''}" data-todo="${esc(row.id)}"${row.remote?' data-cloud="1"':''}>
     <div class="t-box"></div>
     ${level?`<span class="t-lv" style="background:${level}"></span>`:''}
     <div class="t-body"><div class="t-title">${esc(row.title)}</div>
@@ -1947,24 +1947,59 @@ function refreshTodos(force){
 
    notch 里的「面板」就是这张卡片，所以撑开分两步：卡片自己出现，以及它能长到多高。
    只在真的紧的时候动（grow > 0），而且折叠态、有人拖着它、开着菜单、鼠标停在别的环上时
-   一律不动 —— 一张自己弹出来、又正好挡在你正在看的东西前面的卡片，比不提醒更烦人。 */
-let autoCard=false;   // 这张卡是自己撑开的，指针不在上面
+   一律不动 —— 一张自己弹出来、又正好挡在你正在看的东西前面的卡片，比不提醒更烦人。
+
+   **一次性提示**：同一件事只弹一次。这一条不是打磨，是修 bug —— 待办每 20 秒重算一次，
+   每次重算都会走到这里；只要「弹过就不再弹」这件事没被记住，就会 20 秒弹一次、看门狗
+   300ms 后收一次，屏幕上就是那张卡一直在闪。记的是「当前最紧迫那条的 id」：新的更急的事
+   出现时 key 变了，才允许再弹一次。
+
+   **收起只有一条路**：dismissAuto()。定时到点、指针离开、看门狗说人走了、条子要折叠，
+   全都走这里。分头写的话，总有一个分支忘了清 autoCard，下一轮取数又把它弹回来。 */
+const AUTO_LIFE=8000;   // 自己弹出来的卡自己收：8 秒够读两行，不够就一直挡着
+let autoCard=false, autoKey='', autoTimer=null;
+
 function autoGrow(){
   if(!todoAutoOpen) return 0;
   return Math.max(todos.overdue>0?1:0,Math.min(1,todos.expansion||0));
 }
+/** 当下最紧迫的那条是谁。没有截止时间的不算 —— 它们永远「不急」。 */
+function topTodoId(){
+  let best=null;
+  for(const r of (todos.rows||[])){
+    if(r.done||r.left==null) continue;
+    if(!best||r.left<best.left) best=r;
+  }
+  return best?best.id:'';
+}
+function dismissAuto(){
+  clearTimeout(autoTimer); autoTimer=null;
+  if(!autoCard) return;
+  autoCard=false;
+  card.style.removeProperty('--grow');
+  hideCard();
+  scheduleFold();   // 提示收完了，条子该隐藏就隐藏
+}
 function applyAutoCard(){
   if(funcBusy()) return;
   const grow=autoGrow();
-  // 悬停打开时永远是全高（你主动要看，不该被裁）；自己撑开时才跟着紧迫度长，0.45 → 1。
-  if(autoCard) card.style.setProperty('--grow',(0.45+0.55*grow).toFixed(2));
-  else card.style.removeProperty('--grow');
-  if(!grow){
-    if(autoCard){ autoCard=false; hideCard(); }
+  if(autoCard){
+    // 已经在屏幕上了：只跟着紧迫度长，不再重新判断要不要弹
+    if(!grow){ dismissAuto(); return; }
+    card.style.setProperty('--grow',(0.45+0.55*grow).toFixed(2));
     return;
   }
+  if(!grow) return;
+  const key=topTodoId();
+  if(!key||key===autoKey) return;              // 这件事提示过了
   if(folded||carrying||dragging||menuOpen||hovered) return;
-  if(!card.classList.contains('show')){ autoCard=true; hoverId='b:due'; showCard(); }
+  if(card.classList.contains('show')) return;
+  // 悬停打开时永远是全高（你主动要看，不该被裁）；自己撑开时才跟着紧迫度长，0.45 → 1
+  autoCard=true; autoKey=key; hoverId='b:due';
+  card.style.setProperty('--grow',(0.45+0.55*grow).toFixed(2));
+  showCard();
+  clearTimeout(autoTimer);
+  autoTimer=setTimeout(dismissAuto,AUTO_LIFE);
 }
 // 「现在别自作主张」的几种情形，写在一处，好让「指针移开要不要收卡片」和「要不要自己撑开」
 // 用同一个判断 —— 两处各写一遍必然会在某一种情形上分叉。
@@ -1979,7 +2014,8 @@ card.addEventListener('click',e=>{
   }
   const row=e.target.closest('[data-todo]');
   if(!row) return;
-  if(row.dataset.readonly) return;          // 工作台那边的条目：那边改，这里只读
+  // 工作台那边来的条目也能勾：后端先把那条落地成本地记录再改，8 秒后随同步推回去。
+  // 这里以前直接 return（"那边改，这里只读"），结果赛博大脑的行程在条子上点不动。
   callq('toggle_todo',{id:row.dataset.todo}).then(v=>{
     if(v){ todos=v; renderRing(); renderCard(); armWatchdog(); }
   }).catch(()=>{});
@@ -2093,26 +2129,28 @@ document.addEventListener('mousemove',e=>{
   if(dragging)return; // no card while dragging
   if(carrying) return; // the notch is in hand; the card would only be in the way
   setHovered(onHandle(e.clientX,e.clientY));
-  if(hovered){ autoCard=false; if(card.classList.contains('show')){ clearTimeout(hideTimer); hideCard(); } return; }
+  if(hovered){ if(autoCard) dismissAuto(); if(card.classList.contains('show')){ clearTimeout(hideTimer); hideCard(); } return; }
   const hot=pointerInHot(e.clientX,e.clientY);
   if(hot){
     clearTimeout(hideTimer);
     const id=cellAt(e.clientX,e.clientY);
     // The tools ring answers a click, not a hover: a card over it would name a provider that is not
     // under the pointer, and the ring already draws the only thing there is to say about a switch.
-    if(id&&id.indexOf('tool:')===0){ hoverId=null; autoCard=false; if(card.classList.contains('show')) hideCard(); return; }
+    if(id&&id.indexOf('tool:')===0){ hoverId=null; if(autoCard) dismissAuto(); if(card.classList.contains('show')) hideCard(); return; }
     // 指针移到了别的环上：这是你主动要看那一个，自己撑开的那张让位（也不该继续占着
     // 「自己撑开」的身份，否则指针一离开，卡片又会跳回待办）
-    if(id&&id!==hoverId){ hoverId=id; if(id!=='b:due') autoCard=false; if(card.classList.contains('show')){ renderCard(); armWatchdog(); } }
+    if(id&&id!==hoverId){ hoverId=id; if(id!=='b:due'&&autoCard) dismissAuto(); if(card.classList.contains('show')){ renderCard(); armWatchdog(); } }
     if(!card.classList.contains('show')) showCard();
   }
-  // 自己撑开的那张不跟着指针走：它存在的理由就是你在别处的时候它也在。其余照旧收起。
-  else if(card.classList.contains('show')){ if(autoCard) return; if(hideLogged++<5) jslog(`mousemove left the hot area -> collapse at ${e.clientX},${e.clientY}`); scheduleHide(); }
+  // 指针从卡片上滑走了就收：自己弹出来的那张也一样，别等你点才走
+  else if(card.classList.contains('show')){ if(autoCard){ dismissAuto(); return; } if(hideLogged++<5) jslog(`mousemove left the hot area -> collapse at ${e.clientX},${e.clientY}`); scheduleHide(); }
 });
 document.addEventListener('mouseout',e=>{ // relatedTarget null = the cursor left the page
-  if(!e.relatedTarget && card.classList.contains('show')){ if(hideLogged++<5) jslog('mouseout left the page -> collapse'); scheduleHide(); }
+  if(!e.relatedTarget && card.classList.contains('show')){ if(autoCard){ dismissAuto(); return; } if(hideLogged++<5) jslog('mouseout left the page -> collapse'); scheduleHide(); }
 });
-listen('pointer_left',()=>{clearTimeout(hideTimer);hideCard();}).catch(()=>{});
+// 看门狗说指针不在了：自己弹出来的那张连「已提示」一起记下，绝不再弹回来 —— 这一条漏了，
+// 就是「每 20 秒闪一次」的那次闪烁。
+listen('pointer_left',()=>{ if(autoCard){ dismissAuto(); return; } clearTimeout(hideTimer);hideCard(); }).catch(()=>{});
 // Card content changes change its height -> report the hot rectangles again
 listen('workbuddy',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
 listen('state',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
@@ -2290,11 +2328,16 @@ listen('move_end',()=>{ carrying=false; moveHandle.classList.remove('armed'); se
    never folds mid-carry, mid-drag or under the right-click menu, all of which take the pointer off the
    notch on purpose — folding under them is what #239's reviewers caught, so it is ruled out here. */
 const FOLD_GRACE=450; // NotchWindowController.foldGrace
-function foldAllowed(){ return onHover&&!pointerIn&&!carrying&&!dragging&&!menuOpen; }
+// 自己弹出来的那张还在屏上时不折叠：折叠会先把它收掉，然后下一轮取数又弹一次 —— 也是闪。
+function foldAllowed(){ return onHover&&!pointerIn&&!autoCard&&!carrying&&!dragging&&!menuOpen; }
 function setFolded(f){
   if(f===folded) return;
   folded=f;
-  if(f){ clearTimeout(hideTimer); hideCard(); setHovered(null); }
+  if(f){
+    clearTimeout(hideTimer);
+    dismissAuto();          // 自己弹出来的那张不该在折叠的条子上留着
+    hideCard(); setHovered(null);
+  }
   document.body.classList.toggle('folded',f);
   reportHot();
 }
@@ -2310,7 +2353,14 @@ function applyUiFlags(f){
   scheduleFold();
   applyAutoCard();
 }
-listen('notch_pointer',e=>{ pointerIn=e.payload===true; if(pointerIn){ unfold(); refreshTouch(); } else scheduleFold(); }).catch(()=>{});
+// Rust 侧除了「一变就发」，每两秒还补一次当前状态（心跳）。所以这里只认值的变化：
+// 值没变就不该重启折叠计时器，值变了（包括心跳纠正了一个错的 pointerIn）就立刻跟上。
+listen('notch_pointer',e=>{
+  const next=e.payload===true;
+  if(next===pointerIn) return;
+  pointerIn=next;
+  if(pointerIn){ unfold(); refreshTouch(); } else scheduleFold();
+}).catch(()=>{});
 listen('ui_flags',e=>applyUiFlags(e.payload)).catch(()=>{});
 listen('pill_backdrop',e=>{
   if(e.payload==='dark'||e.payload==='light') document.body.dataset.behind=e.payload;

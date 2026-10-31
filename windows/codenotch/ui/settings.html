@@ -107,6 +107,19 @@
   .mini{padding:4px 12px;border-radius:7px;border:1px solid var(--seg-bg);background:var(--seg-bg);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
   .mini:hover{border-color:var(--accent)}
   .mini.ghost{background:transparent}
+  /* 已完成那一行：标题和日期竖着排，右边只放三个按钮。挤在一行里放不下 ——
+     实测标题只剩十来个像素，中文标题被截成一个字。 */
+  .td-done-main{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0}
+  .td-done-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:line-through;opacity:.6}
+  .td-done-meta{font-size:12px;color:var(--text2)}
+  .td-done-btns{display:flex;align-items:center;gap:6px;flex:none}
+  .td-done-btns .mini{padding:3px 9px}
+  /* 已完成那一栏的行内编辑：一条待办要改标题、改期、改优先级，挤在一行里放不下，
+     所以编辑态自己占一个整行，输入框竖着排。 */
+  .item.td-edit{display:block}
+  .td-edit-box{display:flex;flex-direction:column;gap:8px;width:100%}
+  .td-edit-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .td-edit-row > .cred{flex:1 1 140px;width:auto;min-width:0}
   /* Not .acct-detail: that one carries its own 26 px indent, which would stack on top of the block's. */
   .acct-note{font-size:12px;color:var(--text2)}
   /* The verdict a credential check came back with. Red only when the server refused it, so a pass
@@ -237,6 +250,9 @@
         <div class="sec">On the notch</div>
         <div class="group" id="td-list" data-dynamic></div>
 
+        <div class="sec">Done</div>
+        <div class="group" id="td-done" data-dynamic></div>
+
         <div class="sec">CyberBrain</div>
         <div class="group">
           <div class="item"><span>Passphrase</span><input id="td-pass" class="cred" type="password" placeholder="The workbench's passphrase" aria-label="Passphrase"></div>
@@ -324,6 +340,13 @@ const PT_BR_STATIC = {
   "A to-do needs a title.":"Uma tarefa precisa de um título.",
   "On the notch":"Na barra",
   "No open to-dos.":"Nada em aberto.",
+  "Done":"Concluídos",
+  "Nothing done yet.":"Nada concluído ainda.",
+  "Edit":"Editar",
+  "Save":"Salvar",
+  "Cancel":"Cancelar",
+  "Reopen":"Reabrir",
+  "Title":"Título",
   "Delete":"Excluir",
   "Passphrase":"Senha",
   "The workbench's passphrase":"A senha do workbench",
@@ -515,6 +538,13 @@ const RU_STATIC = {
   "A to-do needs a title.":"У дела должно быть название.",
   "On the notch":"На панели",
   "No open to-dos.":"Открытых дел нет.",
+  "Done":"Выполненные",
+  "Nothing done yet.":"Пока ничего не выполнено.",
+  "Edit":"Изменить",
+  "Save":"Сохранить",
+  "Cancel":"Отмена",
+  "Reopen":"Вернуть",
+  "Title":"Название",
   "Delete":"Удалить",
   "Passphrase":"Пароль",
   "The workbench's passphrase":"Пароль workbench",
@@ -673,6 +703,13 @@ const ZH_STATIC = {
   "A to-do needs a title.":"待办总得有个标题。",
   "On the notch":"条子上",
   "No open to-dos.":"没有未完成的待办。",
+  "Done":"已完成",
+  "Nothing done yet.":"还没有完成的。",
+  "Edit":"编辑",
+  "Save":"保存",
+  "Cancel":"取消",
+  "Reopen":"恢复",
+  "Title":"标题",
   "Delete":"删除",
   "Passphrase":"口令",
   "The workbench's passphrase":"工作台的口令",
@@ -862,6 +899,13 @@ const ZH_HANT_STATIC = {
   "A to-do needs a title.":"待辦總要有個標題。",
   "On the notch":"條子上",
   "No open to-dos.":"沒有未完成的待辦。",
+  "Done":"已完成",
+  "Nothing done yet.":"還沒有完成的。",
+  "Edit":"編輯",
+  "Save":"儲存",
+  "Cancel":"取消",
+  "Reopen":"恢復",
+  "Title":"標題",
   "Delete":"刪除",
   "Passphrase":"口令",
   "The workbench's passphrase":"工作台的口令",
@@ -1051,6 +1095,13 @@ const JA_STATIC = {
   "A to-do needs a title.":"タイトルを入れてください。",
   "On the notch":"ノッチ上",
   "No open to-dos.":"未完了はありません。",
+  "Done":"完了済み",
+  "Nothing done yet.":"まだ完了したものはありません。",
+  "Edit":"編集",
+  "Save":"保存",
+  "Cancel":"キャンセル",
+  "Reopen":"戻す",
+  "Title":"タイトル",
   "Delete":"削除",
   "Passphrase":"パスフレーズ",
   "The workbench's passphrase":"ワークベンチのパスフレーズ",
@@ -1227,6 +1278,13 @@ const KO_STATIC = {
   "A to-do needs a title.":"제목을 넣어 주세요.",
   "On the notch":"노치 위",
   "No open to-dos.":"남은 할 일이 없습니다.",
+  "Done":"완료됨",
+  "Nothing done yet.":"아직 완료한 항목이 없습니다.",
+  "Edit":"편집",
+  "Save":"저장",
+  "Cancel":"취소",
+  "Reopen":"되돌리기",
+  "Title":"제목",
   "Delete":"삭제",
   "Passphrase":"암호",
   "The workbench's passphrase":"워크벤치 암호",
@@ -1418,6 +1476,13 @@ const UK_STATIC = {
   "A to-do needs a title.":"У справи має бути назва.",
   "On the notch":"На панелі",
   "No open to-dos.":"Відкритих справ немає.",
+  "Done":"Виконані",
+  "Nothing done yet.":"Поки нічого не виконано.",
+  "Edit":"Змінити",
+  "Save":"Зберегти",
+  "Cancel":"Скасувати",
+  "Reopen":"Повернути",
+  "Title":"Назва",
   "Delete":"Видалити",
   "Passphrase":"Пароль",
   "The workbench's passphrase":"Пароль workbench",
@@ -2689,6 +2754,7 @@ const TD = {
   add: document.getElementById('td-add'),
   addNote: document.getElementById('td-add-note'),
   list: document.getElementById('td-list'),
+  done: document.getElementById('td-done'),
   segSort: document.getElementById('seg-sort'),
   segLevel: document.getElementById('seg-level'),
   auto: document.getElementById('sw-auto'),
@@ -2731,17 +2797,71 @@ function tdRowHtml(row, readOnly){
     + `<span style="display:flex;align-items:center;gap:10px;flex:none">`
     + `<span class="cap" style="margin:0;${when.late?'color:var(--danger)':''}">${esc(meta)}</span>${del}</span></div>`;
 }
+/* ---- 已完成 ------------------------------------------------------------
+   卡片上勾掉一条，它就从「未完成」消失；在那之后想改个错别字、或者把点错的那条恢复出来，
+   都得有个地方 —— 这里就是那个地方。行内编辑而不是弹窗：这一页本来就是一列行，
+   多开一层窗口只是多一次「我该点哪个」。
+   云端来的条目同样列在这里：工作台上勾掉的、手机上误点的，都能在这里恢复。 */
+let tdEditId = null;   // 正在编辑哪一条，同时只允许一条
+
+function tdLevelName(v){
+  return v === '高' ? ui('High','High') : v === '低' ? ui('Low','Low') : v === '中' ? ui('Medium','Medium') : '';
+}
+/** 已完成的行不报「还剩 / 逾期」—— 那条时间线已经结束了，只说它当时的截止日和优先级。 */
+function tdDoneMeta(row){
+  const d = row.date || ui('No date','No date');
+  return [d, tdLevelName(row.level)].filter(Boolean).join(' · ');
+}
+function tdDoneRowHtml(row){
+  const id = esc(row.id);
+  if(tdEditId === row.id){
+    const levels = [['', ui('None','None')], ['高', ui('High','High')], ['中', ui('Medium','Medium')], ['低', ui('Low','Low')]];
+    return `<div class="item td-edit" data-edit="${id}"><div class="td-edit-box">`
+      + `<input class="cred" data-f="title" value="${esc(row.title)}" placeholder="${esc(ui('Title','Title'))}" aria-label="${esc(ui('Title','Title'))}">`
+      + `<div class="td-edit-row">`
+      + `<input class="cred" data-f="date" type="date" value="${esc(row.date)}" aria-label="${esc(ui('Due','Due'))}">`
+      + `<span class="seg" data-f="level">`
+      + levels.map(([v, t]) => `<button data-lv="${v}" class="${row.level === v ? 'on' : ''}">${esc(t)}</button>`).join('')
+      + `</span></div>`
+      + `<div class="td-edit-row" style="justify-content:flex-end">`
+      + `<button class="mini ghost" data-cancel="${id}">${esc(ui('Cancel','Cancel'))}</button>`
+      + `<button class="mini" data-save="${id}">${esc(ui('Save','Save'))}</button>`
+      + `</div></div></div>`;
+  }
+  return `<div class="item"><span class="td-done-main">`
+    + `<span class="td-done-title">${esc(row.title)}</span>`
+    + `<span class="td-done-meta">${esc(tdDoneMeta(row))}</span></span>`
+    + `<span class="td-done-btns">`
+    + `<button class="mini ghost" data-edit="${id}">${esc(ui('Edit','Edit'))}</button>`
+    + `<button class="mini ghost" data-undo="${id}">${esc(ui('Reopen','Reopen'))}</button>`
+    + `<button class="mini ghost" data-del="${id}">${esc(ui('Delete','Delete'))}</button>`
+    + `</span></div>`;
+}
+/* 已完成那一段自己画自己：编辑态只存在于这一栏里，所以它要能单独重画 ——
+   整页重画会把用户打了一半的标题冲掉，而「正在编辑」这件事本身就得让别处的刷新让路。 */
+function tdRenderDone(){
+  if(!TD.done) return;
+  const doneRows = todoView ? (todoView.doneRows || []) : [];
+  // 正在编辑的那条可能已经不在这份里了（别处把它恢复了、或者被删了）：把编辑态收掉，
+  // 否则下一次重画会对着一个不存在的 id 展开输入框。
+  if(tdEditId && !doneRows.some(r => r.id === tdEditId)) tdEditId = null;
+  TD.done.innerHTML = doneRows.length
+    ? doneRows.map(tdDoneRowHtml).join('')
+    : `<div class="item cap">${esc(ui('Nothing done yet.','Nothing done yet.'))}</div>`;
+}
 function tdRender(){
   // 排序按钮的选中态跟着存下来的那个值走，而不是跟着刚才点的那一下
   for(const b of TD.segSort.querySelectorAll('button')) b.classList.toggle('on', !!todoView && b.dataset.v === todoView.sort);
   for(const b of TD.segLevel.querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === tdLevel);
   if(TD.auto) TD.auto.classList.toggle('on', !!autoOpen);
-  if(!todoView){ TD.list.innerHTML = ''; return; }
+  if(!todoView){ TD.list.innerHTML = ''; if(TD.done) TD.done.innerHTML = ''; return; }
   const parts = [];
   for(const r of todoView.rows || []) parts.push(tdRowHtml(r, false));
   for(const r of todoView.remoteRows || []) parts.push(tdRowHtml(r, true));
   TD.list.innerHTML = parts.length ? parts.join('')
     : `<div class="item cap">${esc(ui('No open to-dos.','No open to-dos.'))}</div>`;
+  // 编辑中不重画那一栏：同步每五分钟广播一次 todos，正好在打字时重画一次就等于把输入吞了
+  if(!tdEditId) tdRenderDone();
 }
 function tdRefresh(){
   return invoke('get_todos').then(v => { if(v) todoView = v; tdRender(); })
@@ -2785,6 +2905,50 @@ TD.list.addEventListener('click', e => {
   if(!b) return;
   invoke('delete_todo', {id: b.dataset.del}).then(v => { if(v) todoView = v; return tdRefresh().then(tdRender); })
     .catch(err => strip('delete_todo failed: ' + errText(err)));
+});
+
+/* 已完成那一栏：编辑（就地展开）、恢复、删除。
+   「恢复」走 set_todo_done 而不是 toggle：连点两下不该在完成/未完成之间来回跳。 */
+function tdFindDone(id){
+  return todoView ? (todoView.doneRows || []).find(r => r.id === id) || null : null;
+}
+function tdSaveEdit(){
+  const box = TD.done && TD.done.querySelector('.item.td-edit');
+  if(!box) return;
+  const id = box.dataset.edit, row = tdFindDone(id);
+  if(!row) return;
+  const title = (box.querySelector('[data-f="title"]').value || '').trim();
+  if(!title){ strip(ui('A to-do needs a title.','A to-do needs a title.')); return; }
+  const dateEl = box.querySelector('[data-f="date"]');
+  const on = box.querySelector('.seg button.on');
+  const level = on ? on.dataset.lv : row.level;
+  invoke('update_todo', {
+    id, title, date: dateEl.value || '', time: row.time || '', level, note: row.note || ''
+  }).then(v => { if(v) todoView = v; tdEditId = null; tdRender(); })
+    .catch(err => strip('update_todo failed: ' + errText(err)));
+}
+if(TD.done) TD.done.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if(!b) return;
+  // 优先级那三个按钮只改选中态，等「保存」再一起提交
+  if(b.hasAttribute('data-lv')){
+    for(const x of b.parentElement.querySelectorAll('button')) x.classList.toggle('on', x === b);
+    return;
+  }
+  if(b.dataset.cancel !== undefined){ tdEditId = null; tdRenderDone(); return; }
+  if(b.dataset.edit !== undefined){ tdEditId = b.dataset.edit; tdRenderDone(); return; }
+  if(b.dataset.save !== undefined){ tdSaveEdit(); return; }
+  if(b.dataset.undo !== undefined){
+    invoke('set_todo_done', {id: b.dataset.undo, done: false})
+      .then(v => { if(v) todoView = v; return tdRefresh().then(tdRender); })
+      .catch(err => strip('set_todo_done failed: ' + errText(err)));
+    return;
+  }
+  if(b.dataset.del !== undefined){
+    invoke('delete_todo', {id: b.dataset.del})
+      .then(v => { if(v) todoView = v; return tdRefresh().then(tdRender); })
+      .catch(err => strip('delete_todo failed: ' + errText(err)));
+  }
 });
 
 /* ---- 同步：口令记在 Windows 凭据管理器里，加解密在 Rust 里 ---------------- */
@@ -2853,6 +3017,11 @@ if(TD.syncNow) TD.syncNow.addEventListener('click', () => {
 // 后台线程推完会广播一次，这一页不用轮询
 try {
   window.__TAURI__.event.listen('brain_sync', e => { if(e.payload){ tdSync = e.payload; tdRenderSync(); } });
+} catch(e) { /* 下次获得焦点时再读一次 */ }
+// 在条子上勾掉一条、或者自动同步拉回工作台那边的新记录时，这一页要跟着变：
+// 已完成那一栏正是靠它把刚勾掉的那条显示出来的。
+try {
+  window.__TAURI__.event.listen('todos', e => { if(e.payload){ todoView = e.payload; tdRender(); } });
 } catch(e) { /* 下次获得焦点时再读一次 */ }
 function initTodos(){ tdLoadFlags().then(tdRefresh); tdRefreshSync(); }
 initTodos();

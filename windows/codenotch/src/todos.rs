@@ -77,7 +77,9 @@ pub struct Todo {
     /// 空 = 从 created_at 起算（旧记录、以及工作台上新建的记录都是这样）。
     #[serde(default)]
     pub deadline_set_at: String,
-    /// 这条是从赛博大脑快照读来的，不是本机记录：卡片里只读，不存盘，不推回去。
+    /// 这条是从赛博大脑读来的，还不是本机记录：不存盘、不会被推回去。
+    /// 它**不是只读** —— 真要动它（勾完成、改期、删掉）时，`main.rs` 的 `materialize`
+    /// 会先按原 id 把它写成本地记录，再改。
     #[serde(default, skip_serializing_if = "is_false")]
     pub remote: bool,
     /// 这条已经推上赛博大脑了。只存在本机，推的时候摘掉。
@@ -322,13 +324,16 @@ pub struct Row {
     pub kind: String,
     pub level: String,
     pub note: String,
+    /// 截止日与时刻，原样带出去：设置页那一栏要能把一条改期，得有东西回填输入框。
+    pub date: String,
+    pub time: String,
     /// 还剩多少秒；负数是逾期。没有截止时间的给 null。
     pub left: Option<i64>,
     /// 已经过去的时间占比，0–1。没有截止时间或已完成的是 0。
     pub progress: f64,
     pub urgency: f64,
     pub done: bool,
-    /// 来自赛博大脑快照：卡片里只读
+    /// 还只在云端、本机没有记录：不是只读，点它会先落地成本地记录再改
     pub remote: bool,
 }
 
@@ -343,10 +348,43 @@ pub struct View {
     /// 面板该长多大，0–1
     pub expansion: f64,
     pub rows: Vec<Row>,
-    /// 远程快照推上来的那份，单独列，卡片里只读
+    /// 云端有、本机还没有记录的那些，单独列一段
     pub remote_rows: Vec<Row>,
+    /// 已经做完的，设置页那一栏用
+    pub done_rows: Vec<Row>,
     /// 用户在设置里选的排序：deadline | priority
     pub sort: String,
+}
+
+/// 已完成列表最多给这么多条。再往前的历史该去工作台翻，不该把设置页拉成一条长卷。
+pub const DONE_LIMIT: usize = 50;
+
+/// 已经做完的那些，最近的在前。
+///
+/// 已完成的不进 `rows`（卡片只画还没做完的事），但设置页要能翻回去改错、或者把一条点错的
+/// 恢复出来。云端来的也算：工作台上勾掉的条目同样该出现在这里，否则「在手机上误点了完成」
+/// 就只能回到手机上去改。
+///
+/// 排的是 `updated_at` 而不是另开一个「完成时间」字段：多存一个键，就多一处要和云端对齐的
+/// 东西（工作台不认识它），而一条已完成记录最近一次被改动，几乎总是它被勾掉的那一刻。
+pub fn done_list(items: &[Todo], remote: &[Todo], now: DateTime<Local>, limit: usize) -> Vec<Row> {
+    let local_ids: std::collections::HashSet<&str> = items.iter().map(|t| t.id.as_str()).collect();
+    let mut list: Vec<&Todo> = items
+        .iter()
+        .chain(remote.iter())
+        // 落地过的条目同时出现在两份里时只画一次：本地那份才是能改的
+        .filter(|t| !(t.remote && local_ids.contains(t.id.as_str())))
+        .filter(|t| t.done && !t.deleted && t.kind != "memo")
+        .collect();
+    list.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    list.into_iter()
+        .take(limit)
+        .map(|t| row_of(t, now, t.remote))
+        .collect()
 }
 
 fn row_of(todo: &Todo, now: DateTime<Local>, remote: bool) -> Row {
@@ -356,6 +394,8 @@ fn row_of(todo: &Todo, now: DateTime<Local>, remote: bool) -> Row {
         kind: todo.kind.clone(),
         level: todo.level.clone(),
         note: todo.note.clone(),
+        date: todo.date.clone(),
+        time: todo.time.clone(),
         left: seconds_left(todo, now),
         progress: time_progress(todo, now),
         urgency: urgency(todo, now),
@@ -413,6 +453,7 @@ pub fn view(
             .map(|t| row_of(t, now, false))
             .collect(),
         remote_rows,
+        done_rows: done_list(items, remote, now, DONE_LIMIT),
         sort: if priority_first { "priority".into() } else { "deadline".into() },
     }
 }
@@ -434,9 +475,7 @@ pub fn new_id() -> String {
 
 /// 把本地记录并进云端那份：按 id 取较新的一条，新增的追加。
 ///
-/// **这条规则的执行方在设置页**（`tdMerge`），因为整份 config 的加解密只有 WebView 里
-/// 的 WebCrypto 做得了 —— Rust 这一侧没有能用的加密库（CI 是 `--locked`，加不了依赖）。
-/// 合并规则只有这一份实现：同步在 Rust 里跑（`brain::run_once`），前端不再自己再写一版。
+/// 合并规则只有这一份实现：同步在 Rust 里跑（`brain::run_once`），前端不再自己写一版。
 /// 上一版两边各有一份，然后分叉了 —— 摘本机标记那段页面上的漏了，推上去的每一条都带着
 /// `pushed: true` 进了工作台的记录。
 ///
@@ -672,6 +711,66 @@ mod tests {
         assert_eq!(v.rows.len(), 0, "本地列表里没有");
         assert_eq!(v.remote_rows.len(), 1, "远程列表里有");
         assert!(v.remote_rows[0].remote);
+    }
+
+    /// 做完的从「未完成」那半挪到「已完成」那半：卡片不再画它，设置页还能翻到。
+    #[test]
+    fn a_done_item_moves_to_the_done_list() {
+        let mut done = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        done.done = true;
+        done.updated_at = "2026-10-30T09:00:00Z".into();
+        let mut open = todo_on_day(local(2026, 11, 2, 0, 0), local(2026, 10, 1, 0, 0));
+        open.id = "t2".into();
+        let v = view(&[done.clone(), open], &[], 0, 0, local(2026, 10, 30, 12, 0), false);
+        assert_eq!(v.rows.len(), 1, "没做完的那条还在卡片上");
+        assert_eq!(v.done_rows.len(), 1, "做完的挪到已完成");
+        assert_eq!(v.done_rows[0].id, done.id);
+        assert!(v.done_rows[0].done);
+        assert!(!v.done_rows[0].remote);
+    }
+
+    /// 工作台上勾掉的条目也要出现在已完成里，否则手机上误点的那一下只能回手机上改。
+    #[test]
+    fn a_done_item_from_the_cloud_can_still_be_undone_here() {
+        let mut cloud = remote_item("越南客户回访", "2026-10-20");
+        cloud.id = "c1".into();
+        cloud.done = true;
+        cloud.updated_at = "2026-10-29T09:00:00Z".into();
+        let v = view(&[], &[cloud], 0, 0, local(2026, 10, 30, 12, 0), false);
+        assert_eq!(v.done_rows.len(), 1);
+        assert!(v.done_rows[0].remote, "云端那份要标出来：点它之前得先落地");
+        assert!(v.remote_rows.is_empty(), "已完成的不能再挂在未完成那半");
+    }
+
+    /// 落地过的条目两边都有：已完成列表里只该出现一次，而且出现的是能改的那份。
+    #[test]
+    fn a_landed_item_appears_once_in_the_done_list() {
+        let mut landed = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        landed.id = "c1".into();
+        landed.done = true;
+        landed.updated_at = "2026-10-30T09:00:00Z".into();
+        let mut stale = landed.clone();
+        stale.remote = true;
+        stale.updated_at = "2026-10-28T09:00:00Z".into();
+        let v = view(&[landed], &[stale], 0, 0, local(2026, 10, 30, 12, 0), false);
+        assert_eq!(v.done_rows.len(), 1, "同一 id 只画一次");
+        assert!(!v.done_rows[0].remote, "留下的是本地那份");
+    }
+
+    /// 已完成列表最近改动的排最前；条数也有上限。
+    #[test]
+    fn the_done_list_is_newest_first_and_bounded() {
+        let mut old = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        old.done = true;
+        old.id = "old".into();
+        old.updated_at = "2026-10-20T09:00:00Z".into();
+        let mut new = old.clone();
+        new.id = "new".into();
+        new.updated_at = "2026-10-30T09:00:00Z".into();
+        let now = local(2026, 10, 30, 12, 0);
+        let rows = done_list(&[old.clone(), new], &[], now, DONE_LIMIT);
+        assert_eq!(rows[0].id, "new", "最近的在前");
+        assert_eq!(done_list(&[old], &[], now, 0).len(), 0, "上限为 0 就一条不给");
     }
 
     /// 推上去之前合并：同 id 取较新的一条，本地独有追加，云端独有保留。
