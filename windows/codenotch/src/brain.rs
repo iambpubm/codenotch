@@ -373,6 +373,9 @@ pub struct Tick {
     /// 云端有、本机没有的条目。只用于显示，不写盘 —— 它们已经在云上了，
     /// 存成本地记录会让下一次合并把它们当成「本机新记的」再推一遍。
     pub remote: Vec<Todo>,
+    /// 云端比本机新、应当覆盖本机的那几条（`todos::adopt_newer` 的结论）。
+    /// 由调用方写回本地清单：这是「工作台上改了，条子上要跟着改」的唯一通路。
+    pub adopted: Vec<Todo>,
     /// 这次是否真的写回了云端。
     pub pushed: bool,
 }
@@ -404,6 +407,8 @@ pub fn run_once(pass: &str, uid: &str, local: &[Todo], write_back: bool) -> Resu
 
     let mine: Vec<Todo> = local.iter().filter(|t| !t.remote).cloned().collect();
     let merged = crate::todos::merge_for_push(&mine, &cloud);
+    // 工作台那边改过的那几条：同 id 但云端更新，本机要收下（勾掉的、恢复的、删掉的都算）。
+    let adopted = crate::todos::adopt_newer(&mine, &cloud);
 
     let ids: std::collections::HashSet<&str> = mine.iter().map(|t| t.id.as_str()).collect();
     let remote: Vec<Todo> = merged
@@ -418,7 +423,11 @@ pub fn run_once(pass: &str, uid: &str, local: &[Todo], write_back: bool) -> Resu
         .collect();
 
     if !write_back {
-        return Ok(Tick { remote, pushed: false });
+        return Ok(Tick {
+            remote,
+            adopted,
+            pushed: false,
+        });
     }
 
     config["todos"] = serde_json::to_value(&merged)
@@ -430,7 +439,11 @@ pub fn run_once(pass: &str, uid: &str, local: &[Todo], write_back: bool) -> Resu
     // 又写了一次」的窗口。
     backup(&pulled.raw);
     push(uid, &sealed)?;
-    Ok(Tick { remote, pushed: true })
+    Ok(Tick {
+        remote,
+        adopted,
+        pushed: true,
+    })
 }
 
 #[cfg(test)]

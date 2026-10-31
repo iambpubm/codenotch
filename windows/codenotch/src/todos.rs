@@ -503,6 +503,49 @@ pub fn merge_for_push(local: &[Todo], cloud: &[Todo]) -> Vec<Todo> {
     out
 }
 
+/// 拉取时该收下哪些云端条目：**本机也有同 id、而云端那份更新**的那几条。
+///
+/// 这一条是「在工作台把它恢复成未完成，条子上却还挂着已完成」的正面修法。上一版拉取
+/// 是纯读的：同 id 的条目只算本机的，云端那份连进 `remote` 的资格都没有（那里只收
+/// 本机没有的 id），于是工作台改了它、时间戳也刷新了，本机那份 `done: true` 却纹丝不动，
+/// 一直到用户自己在本机再点一次为止。
+///
+/// 只收「云端更新」这一种，方向是单向的：
+/// * 本机更新（刚勾完、还没推上去的那几秒）必须留着，否则会被上一次的云端副本按回去；
+/// * 时间戳一样也不动 —— 那是刚推上去的那一份，两边内容本来就该相同。
+pub fn adopt_newer(local: &[Todo], cloud: &[Todo]) -> Vec<Todo> {
+    let mut out = Vec::new();
+    for theirs in cloud.iter().filter(|t| !t.remote) {
+        let Some(mine) = local.iter().find(|t| t.id == theirs.id && !t.remote) else {
+            continue;
+        };
+        // 旧记录可能没有时间戳。云端没有 → 没有依据，不动；本机没有 → 云端说了算。
+        let Some(cloud_at) = parse_stamp(&theirs.updated_at) else {
+            continue;
+        };
+        let local_at = parse_stamp(&mine.updated_at);
+        if let Some(local_at) = local_at {
+            if cloud_at <= local_at {
+                continue;
+            }
+        }
+        let mut item = theirs.clone();
+        item.remote = false;
+        // 它本来就在云上：落地后不能让环上那个数字多算一次。
+        item.pushed = true;
+        // 工作台不认识 `deadlineSetAt`，但合并是整条取胜、会原样保留。万一哪一版把它弄丢了，
+        // 别让「重设截止时间」白做一次（时间进度会从 0 重来）。
+        if item.deadline_set_at.trim().is_empty() {
+            item.deadline_set_at = mine.deadline_set_at.clone();
+        }
+        if item.created_at.trim().is_empty() {
+            item.created_at = mine.created_at.clone();
+        }
+        out.push(item);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -807,5 +850,99 @@ mod tests {
         let kept: Vec<&Todo> = back.items.iter().filter(|t| !t.remote).collect();
         assert_eq!(kept.len(), 1, "本地那条还在");
         assert!(text.contains("\"t1\""));
+    }
+
+    /// 拉取时收下的那一份：**工作台把它恢复成未完成**，条子上必须跟着变回去。
+    ///
+    /// 这条守的是一次真实的故障：在条子上勾完成 → 推上云 → 在工作台点「恢复」→
+    /// 条子上还挂着「已完成」，而且一直挂着。原因是拉取只读，同 id 的云端条目连显示都轮不上。
+    #[test]
+    fn adopt_newer_takes_the_clouds_word_when_it_is_newer() {
+        let mut mine = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        mine.id = "same".into();
+        mine.done = true;
+        mine.pushed = true;
+        mine.updated_at = "2026-10-30T10:00:00Z".into();
+
+        let mut theirs = mine.clone();
+        theirs.done = false;
+        theirs.updated_at = "2026-10-30T11:00:00Z".into();
+
+        let adopted = adopt_newer(&[mine], &[theirs]);
+        assert_eq!(adopted.len(), 1, "云端更新了，就该收下");
+        assert!(!adopted[0].done, "恢复成未完成这件事要传过来");
+        assert!(adopted[0].pushed, "它本来就在云上，不能算成本机新记的");
+        assert!(!adopted[0].remote, "收下之后它就是本地记录");
+    }
+
+    /// 本机刚改完、还没推上去的那几秒：云端那份是旧的，收下就等于把刚点的勾按回去。
+    #[test]
+    fn adopt_newer_leaves_an_unpushed_local_edit_alone() {
+        let mut mine = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        mine.id = "same".into();
+        mine.done = true;
+        mine.updated_at = "2026-10-30T11:00:00Z".into();
+
+        let mut theirs = mine.clone();
+        theirs.done = false;
+        theirs.updated_at = "2026-10-30T10:00:00Z".into();
+
+        assert!(adopt_newer(&[mine], &[theirs]).is_empty(), "本机更新时云端不做主");
+    }
+
+    /// 时间戳一样是「刚推上去的那一份」：两边内容本来就该相同，不必动。
+    #[test]
+    fn adopt_newer_ignores_equal_stamps() {
+        let mut mine = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        mine.id = "same".into();
+        mine.updated_at = "2026-10-30T10:00:00Z".into();
+        let theirs = mine.clone();
+        assert!(adopt_newer(&[mine], &[theirs]).is_empty());
+    }
+
+    /// 云端独有的条目仍然只读：收进本地清单，下一次合并就会把它当本机新记的再推一遍。
+    #[test]
+    fn adopt_newer_never_pulls_in_cloud_only_items() {
+        let mut theirs = todo_on_day(local(2026, 11, 5, 0, 0), local(2026, 10, 1, 0, 0));
+        theirs.id = "cloud-only".into();
+        theirs.updated_at = "2026-10-30T11:00:00Z".into();
+        assert!(adopt_newer(&[], &[theirs]).is_empty());
+    }
+
+    /// 工作台不认识 `deadlineSetAt` / `createdAt`。万一哪一版把它丢了，收下云端那份时
+    /// 要拿本机的补回去 —— 否则「重设截止时间」白做，时间进度从 0 重来。
+    #[test]
+    fn adopt_newer_keeps_the_local_timeline_when_the_cloud_forgot_it() {
+        let mut mine = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        mine.id = "same".into();
+        mine.updated_at = "2026-10-30T10:00:00Z".into();
+        mine.created_at = "2026-09-20T08:00:00Z".into();
+        mine.deadline_set_at = "2026-10-25T08:00:00Z".into();
+
+        let mut theirs = mine.clone();
+        theirs.updated_at = "2026-10-30T11:00:00Z".into();
+        theirs.created_at = String::new();
+        theirs.deadline_set_at = String::new();
+
+        let adopted = adopt_newer(&[mine], &[theirs]);
+        assert_eq!(adopted.len(), 1);
+        assert_eq!(adopted[0].created_at, "2026-09-20T08:00:00Z");
+        assert_eq!(adopted[0].deadline_set_at, "2026-10-25T08:00:00Z");
+    }
+
+    /// 在工作台删掉的那条，条子上也要消失 —— 软删除标记同样是「云端的说法」。
+    #[test]
+    fn adopt_newer_carries_a_cloud_delete_over() {
+        let mut mine = todo_on_day(local(2026, 10, 31, 0, 0), local(2026, 10, 1, 0, 0));
+        mine.id = "same".into();
+        mine.updated_at = "2026-10-30T10:00:00Z".into();
+
+        let mut theirs = mine.clone();
+        theirs.deleted = true;
+        theirs.updated_at = "2026-10-30T11:00:00Z".into();
+
+        let adopted = adopt_newer(&[mine], &[theirs]);
+        assert_eq!(adopted.len(), 1);
+        assert!(adopted[0].deleted, "在工作台删掉的那条不能在条子上留着");
     }
 }

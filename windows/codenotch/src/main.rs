@@ -100,6 +100,9 @@ pub struct AppState {
     /// 下一次允许同步的时刻。退避、以及「口令错了就先别撞网关」都写在这里，
     /// 而不是藏在线程的局部变量里：改账号、改口令的时候，别处要能把它清零。
     pub sync_next: Mutex<i64>,
+    /// 「现在就拉一次」的请求。指针落到条子上时置起 —— 定时拉取是五分钟一次，
+    /// 而他在工作台刚改完那一条的时候，往往正盯着条子看。
+    pub sync_wake: Mutex<bool>,
 }
 
 fn resolved_lang(raw: &str) -> String {
@@ -1085,14 +1088,31 @@ const SYNC_TICK_SECS: u64 = 2;
 const SYNC_DEBOUNCE_SECS: i64 = 8;
 /// 定时拉一次云端：手机上加的条目要能出现在条子上，而工作台不一定会开着。
 const SYNC_PULL_SECS: i64 = 300;
+/// 被 `wake_sync` 叫醒的那一次拉取，两次之间至少隔这么久。五秒一次地撞网关没有意义。
+const SYNC_NUDGE_GAP_SECS: i64 = 30;
 /// 网络失败后的退避梯度（秒）。断了网不该每两秒撞一次网关。
 const SYNC_BACKOFF: [i64; 3] = [30, 120, 480];
 /// 非网络故障（口令不对、云端形状看不懂）等多久再碰一次。什么都不做也一样的结果，
 /// 但也不能永远不动 —— 万一他是在别处把口令改回来了呢。
 const SYNC_COOLDOWN_SECS: i64 = 3600;
 
-/// 跑一次同步：读云端、合并、按需写回。`write_back` 为假时只读 —— 定时拉取走这条路，
-/// 它不改动云端任何一个字节。
+/// 请求同步线程「下一次醒来先拉一遍」。
+///
+/// 只在没在退避时置起：那张表是给网关留的面子，指针晃两下不该把它清掉。真正的节流在
+/// 循环里（`last_pull` 的间隔），这里不重复判。
+fn wake_sync(app: &AppHandle) {
+    let st = app.state::<AppState>();
+    if *st.sync_next.lock().unwrap() > now_secs() {
+        return;
+    }
+    if !st.sync.lock().unwrap().saved {
+        return;
+    }
+    *st.sync_wake.lock().unwrap() = true;
+}
+
+/// 跑一次同步：读云端、合并、按需写回。`write_back` 为假时**不改动云端任何一个字节**，
+/// 但会收下云端那份更新的条目（定时拉取走这条路）。
 ///
 /// `started` 是这次同步开始的时刻，用来判断「推送期间他是不是又改了一条」。
 fn sync_once(app: &AppHandle, write_back: bool, started: i64) -> Result<brain::Tick, brain::Fail> {
@@ -1116,6 +1136,38 @@ fn sync_once(app: &AppHandle, write_back: bool, started: i64) -> Result<brain::T
     let tick = brain::run_once(&pass, &uid, &local, write_back)?;
 
     let st = app.state::<AppState>();
+    // 拉回来的「云端更新了的那几条」写进本地清单。不写，工作台上把一条恢复成未完成之后，
+    // 条子上那份 `done: true` 就永远留着 —— 云端那份连显示都轮不上（`remote` 只收本机没有的 id）。
+    if !tick.adopted.is_empty() {
+        let mut store = st.todos.lock().unwrap();
+        let mut changed = false;
+        for theirs in tick.adopted.iter() {
+            let Some(mine) = store.items.iter_mut().find(|t| t.id == theirs.id) else {
+                continue;
+            };
+            // 再比一次：`local` 是几秒前的快照，这中间他可能刚在本机改了一条。
+            // 本机又变新了就不收 —— 那份改动还没推上去，不能被上一个云端副本按回去。
+            let take = match (
+                todos::parse_stamp(&theirs.updated_at),
+                todos::parse_stamp(&mine.updated_at),
+            ) {
+                (Some(theirs_at), Some(mine_at)) => theirs_at > mine_at,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            if !take {
+                continue;
+            }
+            let mut next = theirs.clone();
+            next.remote = false;
+            next.pushed = true;
+            *mine = next;
+            changed = true;
+        }
+        if changed {
+            let _ = todos::save(&store);
+        }
+    }
     if tick.pushed {
         {
             let mut store = st.todos.lock().unwrap();
@@ -1205,12 +1257,13 @@ fn spawn_sync(app: AppHandle) {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(SYNC_TICK_SECS));
             let now = now_secs();
-            let (dirty, saved, next) = {
+            let (dirty, saved, next, wake) = {
                 let st = app.state::<AppState>();
                 let saved = st.sync.lock().unwrap().saved;
                 let dirty = *st.todo_dirty.lock().unwrap();
                 let next = *st.sync_next.lock().unwrap();
-                (dirty, saved, next)
+                let wake = *st.sync_wake.lock().unwrap();
+                (dirty, saved, next, wake)
             };
             if now < next {
                 continue;
@@ -1220,9 +1273,14 @@ fn spawn_sync(app: AppHandle) {
                 continue;
             }
             let want_push = dirty > 0 && now - dirty >= SYNC_DEBOUNCE_SECS;
-            let want_pull = now - last_pull >= SYNC_PULL_SECS;
+            let want_pull = now - last_pull >= SYNC_PULL_SECS
+                || (wake && now - last_pull >= SYNC_NUDGE_GAP_SECS);
             if !want_push && !want_pull {
                 continue;
+            }
+            if want_pull {
+                // 一次请求已经满足了这次醒来的理由；下次落指针再置起。
+                *app.state::<AppState>().sync_wake.lock().unwrap() = false;
             }
 
             {
@@ -1619,6 +1677,11 @@ fn start_pointer_watchdog(app: AppHandle) {
                 set_click_through(&app, !inside);
                 click_through = Some(!inside);
                 beat = 0;
+                // 指针刚落到条子上：顺手叫同步线程问一次云端。他在工作台改完那一条之后，
+                // 眼睛多半就在这里 —— 定时拉取是五分钟一次，等不起。
+                if inside {
+                    wake_sync(&app);
+                }
                 // Show on hover opens on this and folds a moment after it goes false. The page cannot
                 // tell on its own: once click-through is back on, it is sent nothing at all.
                 let _ = app.emit_to("notch", "notch_pointer", inside);
@@ -2714,6 +2777,7 @@ fn main() {
             sync: Mutex::new(brain::SyncState::default()),
             todo_dirty: Mutex::new(0),
             sync_next: Mutex::new(0),
+            sync_wake: Mutex::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
