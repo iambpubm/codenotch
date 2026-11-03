@@ -1,8 +1,12 @@
 use crate::i18n::tr;
 use crate::traymenu;
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
+
+/// The pin icon is a tray icon of its own, with its own id, because it is a mode rather than a
+/// command: it has to sit there showing whether clicks are being captured.
+const PIN_ID: &str = "pin";
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_menu(app)?;
@@ -18,7 +22,95 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, ev| handle(app, ev.id().as_ref()))
         .build(app)?;
+    setup_pin(app)?;
     Ok(())
+}
+
+/// The always-on-top icon: left click arms the picker, right click opens the three things you can
+/// do with it.
+///
+/// It is separate from the app's own icon on purpose. Pinning another application's window is the
+/// one thing in Codenotch that reaches outside Codenotch, and it wants a target you can hit
+/// without opening a menu and reading it.
+fn setup_pin(app: &AppHandle) -> tauri::Result<()> {
+    let mut builder = TrayIconBuilder::with_id(PIN_ID);
+    if let Some(icon) = crate::trayicon::pin_mark() {
+        builder = builder.icon(icon);
+    }
+    builder
+        .tooltip(pin_tooltip(app))
+        .menu(&pin_menu(app)?)
+        // Left click must arm the picker, not open a menu: arming is the whole point of the icon.
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "pin_mode" => crate::pintop::toggle_mode(),
+            "pin_clear" => crate::pintop::release_all(),
+            "settings" => crate::settings_window::open(app),
+            _ => {}
+        })
+        .on_tray_icon_event(|_tray, event| {
+            // Up, not Down: Windows reports both, and toggling on each would arm and disarm in
+            // the same press.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                crate::pintop::toggle_mode();
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// The menu behind a right click on the pin icon. Rebuilt whenever the mode or the count changes,
+/// so the first line always says what the next click would do.
+fn pin_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let lang = language(app);
+    let armed = crate::pintop::is_armed();
+    let held = crate::pintop::count();
+    let mode = MenuItemBuilder::with_id(
+        "pin_mode",
+        tr(&lang, if armed { "pin_stop" } else { "pin_start" }),
+    )
+    .build(app)?;
+    let clear = MenuItemBuilder::with_id("pin_clear", tr(&lang, "pin_clear"))
+        .enabled(held > 0)
+        .build(app)?;
+    let settings = MenuItemBuilder::with_id("settings", tr(&lang, "settings")).build(app)?;
+    MenuBuilder::new(app)
+        .item(&mode)
+        .item(&clear)
+        .separator()
+        .item(&settings)
+        .build()
+}
+
+/// What the pointer finds when it rests on the pin icon: whether it is listening, and how many
+/// windows it is holding up. Without this the mode has no visible state anywhere.
+fn pin_tooltip(app: &AppHandle) -> String {
+    let lang = language(app);
+    if crate::pintop::is_armed() {
+        return tr(&lang, "pin_tip_armed").to_string();
+    }
+    match crate::pintop::count() {
+        0 => tr(&lang, "pin_tip_idle").to_string(),
+        n => format!("{} · {}", tr(&lang, "pin_tray"), n),
+    }
+}
+
+/// Puts the icon back in step with the mode. Called from the picker's own threads, so the hop to
+/// the main thread happens here: a menu is a Windows UI object and must not be built off it.
+pub fn refresh_pin_tray(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(tray) = handle.tray_by_id(PIN_ID) else { return };
+        if let Ok(menu) = pin_menu(&handle) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        let _ = tray.set_tooltip(Some(&pin_tooltip(&handle)));
+    });
 }
 
 /// The readings themselves, as the Mac's menu bar shows them: a line per provider with its headline
@@ -165,7 +257,7 @@ fn handle(app: &AppHandle, id: &str) {
         return;
     }
     match id {
-        "pin_top" => crate::pintop::begin_pick(),
+        "pin_top" => crate::pintop::toggle_mode(),
         "refresh" => crate::refresh_all(app),
         "settings" => crate::settings_window::open(app),
         "quit" => {

@@ -107,6 +107,11 @@ pub struct Config {
     /// leave the app running with no way to reach it.
     #[serde(default = "yes")]
     pub tray_visible: bool,
+    /// true = the always-on-top mode gets a tray icon of its own. Off, pinning is still reachable
+    /// from Codenotch's own menu — this switch hides the shortcut, not the feature, so unlike
+    /// `tray_visible` it is never forced back on.
+    #[serde(default = "yes")]
+    pub pin_tray: bool,
     /// false = no arc above the notch to carry it by. Nothing is lost: Appearance → Edge moves it too.
     #[serde(default = "yes")]
     pub show_move_handle: bool,
@@ -293,6 +298,7 @@ impl Default for Config {
             notch_visible: true,
             notch_on_hover: true,
             tray_visible: true,
+            pin_tray: true,
             show_move_handle: true,
             adaptive_pill: false,
             brain_uid: String::new(),

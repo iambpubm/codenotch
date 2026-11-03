@@ -17,6 +17,15 @@ pub fn app_mark() -> Option<tauri::image::Image<'static>> {
     tauri::image::Image::from_bytes(include_bytes!("../icons/tray-color.png")).ok()
 }
 
+/// The always-on-top icon: a white push pin on a deep cyan tile.
+///
+/// It has to sit next to the app's own mark and be told apart from it at 16 px, so it borrows the
+/// silhouette — a rounded square — and refuses to borrow the colours: one flat dark cyan instead
+/// of the full-colour gradient, with a shape that survives being shrunk to half size.
+pub fn pin_mark() -> Option<tauri::image::Image<'static>> {
+    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-pin.png")).ok()
+}
+
 /// The same icon as a `data:` URL, so the settings window shows what the taskbar shows.
 pub fn app_mark_data_url() -> Option<String> {
     png_data_url(include_bytes!("../icons/tray-color.png"))

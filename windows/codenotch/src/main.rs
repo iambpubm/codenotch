@@ -2304,6 +2304,8 @@ struct UiFlags {
     notch_visible: bool,
     notch_on_hover: bool,
     tray_visible: bool,
+    /// 独立的「窗口置顶」托盘图标是否显示。它与主图标是两个开关：主图标管读数，这个只管置顶。
+    pin_tray: bool,
     /// 待办临近截止时，卡片自己撑开催你。页面要它来决定「要不要在不悬停的时候也展开」。
     todo_auto_open: bool,
 }
@@ -2313,6 +2315,7 @@ fn ui_flags(c: &config::Config) -> UiFlags {
         notch_visible: c.notch_visible,
         notch_on_hover: c.notch_on_hover,
         tray_visible: c.tray_visible,
+        pin_tray: c.pin_tray,
         todo_auto_open: c.todo_auto_open,
     }
 }
@@ -2344,6 +2347,25 @@ fn set_ui_flags(app: AppHandle, notch_visible: bool, tray_visible: bool, notch_o
     flags
 }
 
+/// The pin icon's own switch. Unlike the app icon it is not tied to the notch: with it off,
+/// pinning is still reachable from Codenotch's own menu, so there is nothing to protect against.
+#[tauri::command]
+fn set_pin_tray(app: AppHandle, enabled: bool) -> bool {
+    {
+        let st = app.state::<AppState>();
+        let mut c = st.cfg.lock().unwrap();
+        c.pin_tray = enabled;
+        config::save(&c);
+    }
+    // An icon that just disappeared must not leave clicks being captured with nothing on screen
+    // to explain them.
+    if !enabled && crate::pintop::is_armed() {
+        crate::pintop::toggle_mode();
+    }
+    apply_visibility(&app);
+    enabled
+}
+
 /// The notch menu's Keep open: the Mac's own shortcut between Always show and Show on hover
 /// (`onToggleKeepOpen` flips `notchVisibility`), so it is the same setting from another place.
 pub fn toggle_keep_open(app: &AppHandle) {
@@ -2364,10 +2386,10 @@ pub fn keeps_open(app: &AppHandle) -> bool {
 
 /// Puts the two switches into effect.
 pub fn apply_visibility(app: &AppHandle) {
-    let (notch, tray_on, flags) = {
+    let (notch, tray_on, pin_on, flags) = {
         let st = app.state::<AppState>();
         let c = st.cfg.lock().unwrap();
-        (c.notch_visible, c.tray_visible, ui_flags(&c))
+        (c.notch_visible, c.tray_visible, c.pin_tray, ui_flags(&c))
     };
     // The page folds or stays open by these, and the Settings window redraws its Show row from them
     // when Keep open changed them from the notch's own menu
@@ -2382,6 +2404,9 @@ pub fn apply_visibility(app: &AppHandle) {
     }
     if let Some(t) = app.tray_by_id("main") {
         let _ = t.set_visible(tray_on);
+    }
+    if let Some(t) = app.tray_by_id("pin") {
+        let _ = t.set_visible(pin_on);
     }
 }
 
@@ -2845,6 +2870,7 @@ fn main() {
             get_app_icon,
             get_ui_flags,
             set_ui_flags,
+            set_pin_tray,
             get_lang,
             get_lang_resolved,
             get_autostart,
@@ -2903,7 +2929,7 @@ fn main() {
             topmost::start_watchdog(handle.clone());
             // Frames for any window the user pins. Started here so the thread is up before the
             // tray can offer the item that fills its list.
-            pintop::start();
+            pintop::start(handle.clone());
             // Persist the config
             {
                 let st = handle.state::<AppState>();

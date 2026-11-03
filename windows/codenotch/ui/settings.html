@@ -214,6 +214,8 @@
           <div class="item"><span>App icon</span><span class="seg" id="seg-tray"><button data-v="tray">System tray</button><button data-v="none">Neither</button></span></div>
           <div class="item cap" id="cap-tray" data-dynamic></div>
           <div class="item cap" id="flags-fix" data-dynamic hidden></div>
+          <div class="item"><span>Always on top icon</span><span class="seg" id="seg-pin"><button data-v="on">System tray</button><button data-v="off">Off</button></span></div>
+          <div class="item cap" id="cap-pin" data-dynamic></div>
           <div class="item"><span>Language</span>
             <select id="lang" aria-label="Language">
               <option value="auto">Follow system</option>
@@ -499,6 +501,9 @@ const PT_BR_STATIC = {
   'The notch is back in the middle':'O notch voltou para o centro',
   'App':'App',
   'App icon':'Ícone do app',
+  'Always on top icon':'Ícone de fixar no topo',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'Um ícone separado ao lado do relógio. Clique nele e depois em qualquer janela para fixar; clique de novo para soltar.',
+  "No second icon. Pinning stays under Codenotch's own menu.":'Sem ícone separado. Fixar continua no menu do Codenotch.',
   'System tray':'Bandeja do sistema',
   'Neither':'Nenhum',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'O pequeno ícone próximo ao relógio. Clique com o botão direito para abrir esta janela, atualizar as leituras ou sair do Codenotch.',
@@ -672,6 +677,9 @@ const RU_STATIC = {
   'The arc above the notch. Hold it to carry the notch to another edge — Edge above does the same.':'Дуга над панелью. Зажмите её, чтобы перенести панель к другому краю, — то же делает настройка «Край» выше.',
   'The notch is back in the middle':'Панель возвращена в центр',
   'App':'Приложение', 'App icon':'Значок приложения', 'System tray':'Системный трей', 'Neither':'Ни то ни другое',
+  'Always on top icon':'Значок «Поверх всех»',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'Отдельный значок рядом с часами. Щёлкните его, затем щёлкните окно, чтобы закрепить; ещё раз — чтобы открепить.',
+  "No second icon. Pinning stays under Codenotch's own menu.":'Без отдельного значка. Закрепление остаётся в меню Codenotch.',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'Небольшой значок рядом с часами. Щелчок правой кнопкой открывает это окно, обновляет данные или завершает работу Codenotch.',
   'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.':'Значка в системном трее нет. Откройте Codenotch снова из меню «Пуск», чтобы вернуть эти настройки.',
   'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'Оставлен включённым: панель скрыта, поэтому этот значок — единственный способ открыть Codenotch. Сначала включите панель, если хотите скрыть значок.',
@@ -845,6 +853,9 @@ const ZH_STATIC = {
   'The notch is back in the middle':'刘海已回到中间',
   'App':'应用',
   'App icon':'应用图标',
+  'Always on top icon':'窗口置顶图标',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'时钟旁边多一个图标。点一下它，再点任意窗口即可置顶；再点同一个窗口取消。',
+  "No second icon. Pinning stays under Codenotch's own menu.":'不显示这个图标。置顶仍可从 Codenotch 自己的菜单里使用。',
   'Neither':'都不显示',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'时钟旁边的小图标。右键点击它可打开此窗口、刷新读数或退出 Codenotch。',
   'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'强制开启：刘海已被隐藏，因此该图标是访问 Codenotch 的唯一方式。如果你想隐藏此图标，请先重新开启刘海。',
@@ -1041,6 +1052,9 @@ const ZH_HANT_STATIC = {
   'The notch is back in the middle':'瀏海已回到中間',
   'App':'App',
   'App icon':'App 圖示',
+  'Always on top icon':'視窗置頂圖示',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'時鐘旁多一個圖示。點一下它，再點任意視窗即可置頂；再點同一個視窗取消。',
+  "No second icon. Pinning stays under Codenotch's own menu.":'不顯示這個圖示。置頂仍可從 Codenotch 自己的選單使用。',
   'Neither':'都不顯示',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'時鐘旁邊的小圖示。在它上面按右鍵可開啟此視窗、重新整理讀數或結束 Codenotch。',
   'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'強制開啟：瀏海已被隱藏，因此該圖示是前往 Codenotch 的唯一方式。如果你想隱藏此圖示，請先重新開啟瀏海。',
@@ -1239,6 +1253,9 @@ const JA_STATIC = {
   'The notch is back in the middle':'ノッチが中央に戻りました',
   'App':'アプリ',
   'App icon':'アプリアイコン',
+  'Always on top icon':'最前面固定アイコン',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'時計の横に専用アイコンを追加します。クリックしてからウィンドウをクリックすると固定、もう一度クリックで解除。',
+  "No second icon. Pinning stays under Codenotch's own menu.":'専用アイコンを表示しません。固定は Codenotch のメニューから使えます。',
   'Neither':'どちらにも出さない',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'時計のそばにある小さなアイコンです。右クリックするとこのウィンドウを開いたり、読み取りを更新したり、Codenotch を終了したりできます。',
   'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'保持オン: ノッチが非表示になっているため、Codenotch にアクセスできるのはこのアイコンだけです。このアイコンを非表示にしたい場合は、先にノッチをオンに戻してください。',
@@ -1433,6 +1450,9 @@ const KO_STATIC = {
   'The notch is back in the middle':'노치가 중앙으로 돌아왔습니다',
   'App':'앱',
   'App icon':'앱 아이콘',
+  'Always on top icon':'항상 위 아이콘',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'시계 옆에 전용 아이콘을 표시합니다. 클릭한 뒤 창을 클릭하면 고정, 다시 클릭하면 해제.',
+  "No second icon. Pinning stays under Codenotch's own menu.":'전용 아이콘을 표시하지 않습니다. 고정은 Codenotch 메뉴에서 사용할 수 있습니다.',
   'Neither':'표시 안 함',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'시계 옆에 있는 작은 아이콘입니다. 마우스 오른쪽 버튼을 클릭하면 이 창이 열리거나, 측정값을 새로 고치거나, Codenotch를 종료할 수 있습니다.',
   'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'유지됨: 노치가 숨겨져 있으므로 이 아이콘이 Codenotch에 접근할 수 있는 유일한 방법입니다. 이 아이콘을 숨기려면 먼저 노치를 다시 켜십시오.',
@@ -1633,6 +1653,9 @@ const UK_STATIC = {
   'The notch is back in the middle':'Виріз повернувся в центр',
   'App':'Застосунок',
   'App icon':'Значок застосунку',
+  'Always on top icon':'Значок «Поверх усіх»',
+  "A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.":'Окремий значок поруч із годинником. Клацніть його, потім клацніть вікно, щоб закріпити; ще раз — щоб відкріпити.',
+  "No second icon. Pinning stays under Codenotch's own menu.":'Без окремого значка. Закріплення лишається в меню Codenotch.',
   'Neither':'Ніде',
   'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'Невеликий значок унизу біля годинника. Клацання правою кнопкою відкриває це вікно, оновлює показники або завершує роботу Codenotch.',
   'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'Лишено ввімкненим: виріз приховано, тож цей значок — єдиний спосіб дістатися до Codenotch. Щоб сховати значок, спершу увімкніть виріз назад.',
@@ -2278,21 +2301,25 @@ const TRAY_WHY = 'The small icon down by the clock. Right-clicking it opens this
 const NO_TRAY_WHY = 'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.';
 const HELD_ON = 'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.';
 const KEPT_ON = 'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.';
-let flags = { notch:true, hover:false, tray:true }, flagsBusy = false, flagsCorrected = false;
+const PIN_ON_WHY = 'A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.';
+const PIN_OFF_WHY = "No second icon. Pinning stays under Codenotch's own menu.";
+let flags = { notch:true, hover:false, tray:true, pin:true }, flagsBusy = false, flagsCorrected = false, pinBusy = false;
 
 function readFlags(v){
   const nv = v && (v.notch_visible !== undefined ? v.notch_visible : v.notchVisible);
   const hv = v && (v.notch_on_hover !== undefined ? v.notch_on_hover : v.notchOnHover);
   const tv = v && (v.tray_visible !== undefined ? v.tray_visible : v.trayVisible);
-  return { notch: nv !== false, hover: hv === true, tray: tv !== false };
+  const pv = v && (v.pin_tray !== undefined ? v.pin_tray : v.pinTray);
+  return { notch: nv !== false, hover: hv === true, tray: tv !== false, pin: pv !== false };
 }
 function showMode(){ return !flags.notch ? 'hide' : flags.hover ? 'hover' : 'show'; }
-function drawSeg(id, value, disabled){
+function drawSeg(id, value, disabled, busy){
+  const off = busy === undefined ? flagsBusy : busy;
   for(const b of document.querySelectorAll('#' + id + ' button')){
     const on = b.dataset.v === value;
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.disabled = flagsBusy || (disabled || []).indexOf(b.dataset.v) >= 0;
+    b.disabled = off || (disabled || []).indexOf(b.dataset.v) >= 0;
   }
 }
 function renderFlags(){
@@ -2305,11 +2332,14 @@ function renderFlags(){
   const fix = document.getElementById('flags-fix');
   fix.hidden = !flagsCorrected;
   fix.textContent = ui(KEPT_ON, KEPT_ON);
+  drawSeg('seg-pin', flags.pin ? 'on' : 'off', [], pinBusy);
+  const pinWhy = flags.pin ? PIN_ON_WHY : PIN_OFF_WHY;
+  document.getElementById('cap-pin').textContent = ui(pinWhy, pinWhy);
 }
 function saveFlags(wantNotch, wantTray, wantHover){
   if(flagsBusy) return;
   flagsBusy = true;
-  const asked = { notch:wantNotch, hover:wantHover, tray:wantTray };
+  const asked = { notch:wantNotch, hover:wantHover, tray:wantTray, pin:flags.pin };
   flags = asked;
   renderFlags();
   invoke('set_ui_flags', { notchVisible: wantNotch, trayVisible: wantTray, notchOnHover: wantHover })
@@ -2337,6 +2367,31 @@ document.getElementById('seg-tray').addEventListener('click', e => {
   if(!b || b.disabled) return;
   const tray = b.dataset.v === 'tray';
   if(tray !== flags.tray) saveFlags(flags.notch, tray, flags.hover);
+});
+/* The pin icon has a switch of its own, and unlike the app icon it is not tied to the notch: with
+   it off, pinning is still reachable from Codenotch's own menu. */
+function savePin(want){
+  if(pinBusy || flags.pin === want) return;
+  pinBusy = true;
+  flags.pin = want;
+  renderFlags();
+  invoke('set_pin_tray', { enabled: want })
+    .then(v => {
+      flags.pin = v !== false;
+      toast();
+    })
+    .catch(e => strip('set_pin_tray failed: ' + errText(e)))
+    .then(() => {
+      pinBusy = false;
+      return call('get_ui_flags', undefined, null);
+    })
+    .then(v => { if(v && typeof v === 'object') flags = readFlags(v); renderFlags(); });
+}
+document.getElementById('seg-pin').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if(!b || b.disabled) return;
+  const want = b.dataset.v === 'on';
+  if(want !== flags.pin) savePin(want);
 });
 // Keep open in the notch's own menu changes the same setting while this window may be open
 try { window.__TAURI__.event.listen('ui_flags', e => { if(!flagsBusy && e.payload){ flags = readFlags(e.payload); renderFlags(); } }); } catch(e) { /* read again next time it opens */ }

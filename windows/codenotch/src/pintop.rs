@@ -1,9 +1,13 @@
 //! Keeps *other* applications' windows on top, the way PowerToys' "Always on Top" does.
 //!
 //! `topmost.rs` and this module look alike and are not: that one fights to keep our own notch in
-//! the topmost band, this one deliberately changes the z-order of windows we do not own. Two
-//! clicks and it is done — one on the tray item to arm the picker, one on the window that should
-//! stay up — and a second pick on the same window lets it go again.
+//! the topmost band, this one deliberately changes the z-order of windows we do not own.
+//!
+//! It is a mode, not a one-shot command. The pin in the system tray stays armed until the user says
+//! otherwise, so pinning three windows is three clicks and no fiddling with the tray between them:
+//! a left click on a window pins it, a second left click on the same window lets it go again, and
+//! Escape, a right click, a click on the desktop, or a click back onto the tray icon ends the mode.
+//! An armed picker that is simply forgotten releases itself after a minute of no picks.
 //!
 //! The picker is a low-level mouse hook rather than a shortcut because the click has to select a
 //! window without also pressing whatever button is under the pointer: a click that both pins a
@@ -14,72 +18,99 @@
 //! The frame is a `STATIC` popup carrying `WS_EX_LAYERED | WS_EX_TRANSPARENT`: it never takes a
 //! click, never takes focus, and its pixels come from `UpdateLayeredWindow`, so the rounded stroke
 //! is antialiased instead of the jagged steps a colour-keyed window would leave.
+//!
+//! Where the frame goes is the part that is easy to get wrong. `GetWindowRect` includes the
+//! invisible resize border — up to 8 px of nothing on a normal window — so a frame drawn on it
+//! stands well clear of the edge and looks like it belongs to the wallpaper rather than to the
+//! window. `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` reports the rectangle that is
+//! actually on screen, and the stroke is drawn on that line, which is what makes it read as a
+//! border instead of a halo.
 
 #[cfg(windows)]
-pub use win::{begin_pick, shutdown, start};
+pub use win::{count, is_armed, release_all, shutdown, start, toggle_mode};
 
 #[cfg(not(windows))]
-pub fn begin_pick() {}
+pub fn count() -> usize {
+    0
+}
+#[cfg(not(windows))]
+pub fn is_armed() -> bool {
+    false
+}
+#[cfg(not(windows))]
+pub fn release_all() {}
 #[cfg(not(windows))]
 pub fn shutdown() {}
 #[cfg(not(windows))]
-pub fn start() {}
+pub fn start(_app: tauri::AppHandle) {}
+#[cfg(not(windows))]
+pub fn toggle_mode() {}
 
 #[cfg(windows)]
 mod win {
     use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering::SeqCst};
+    use std::sync::OnceLock;
     use std::time::{Duration, Instant};
 
     use windows::core::w;
     use windows::Win32::Foundation::{
         COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
     };
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, SelectObject,
-        AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
-        DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetDeviceCaps,
+        SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+        DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, LOGPIXELSX,
     };
     use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, CreateWindowExW, DestroyWindow, DispatchMessageW, GetAncestor, GetClassNameW,
-        GetCursorPos,
-        GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-        IsWindow, IsWindowVisible, IsZoomed, KillTimer, PostThreadMessageW, SetTimer, SetWindowPos,
-        SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx, UpdateLayeredWindow, WindowFromPoint,
-        GA_ROOT, GWL_EXSTYLE, HHOOK, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, MSG, MSLLHOOKSTRUCT,
-        SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, ULW_ALPHA,
-        WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONDOWN, WM_TIMER,
-        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+        GetCursorPos, GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+        IsIconic, IsWindow, IsWindowVisible, IsZoomed, KillTimer, PostThreadMessageW, SetTimer,
+        SetWindowPos, SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx, UpdateLayeredWindow,
+        WindowFromPoint, GA_ROOT, GWL_EXSTYLE, HHOOK, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, MSG,
+        MSLLHOOKSTRUCT, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        ULW_ALPHA, WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONDOWN,
+        WM_TIMER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
         WS_POPUP,
     };
 
-    /// Where the frame window sits relative to the window it frames, in physical pixels. Wide
-    /// enough to hold the halo: the stroke starts at `OFFSET` outside the window and the glow
-    /// reaches `OFFSET + STROKE + GLOW` beyond it.
-    const GROW: i32 = 8;
-    /// How far outside the window's own edge the centre of the stroke sits. Positive, so the line
-    /// never covers a pixel the window draws: a frame that ate the first column of a text editor
-    /// would be worse than no frame at all.
+    /// Where the frame window sits relative to the window it frames, in physical pixels. Just wide
+    /// enough for the stroke's outer half and its halo: the stroke is centred on the window's own
+    /// visible edge, so the ink reaches `STROKE + GLOW` beyond it.
+    const GROW: i32 = 6;
+    /// How far outside the window's visible edge the centre of the stroke sits. Zero, so the line
+    /// sits *on* the edge the way PowerToys' border does — half of it inside, half outside. The
+    /// inside half covers the window's own one-pixel frame and its rounded corner, never its
+    /// content: `DWMWA_EXTENDED_FRAME_BOUNDS` already excludes the invisible resize border.
     ///
     /// A maximised window is the exception and is handled per frame: its rectangle is the whole
-    /// screen, so a stroke outside it would be drawn off the edge and never seen. `Frame::inner`
-    /// flips the offset for exactly that case.
-    const OFFSET: f32 = 1.5;
-    /// Outer corner radius. Windows 11 rounds a window at 8 px; a pixel and a half further out, 11
-    /// sits on the same arc instead of cutting across it.
-    const RADIUS: f32 = 11.0;
+    /// screen, so a stroke centred on it would lose its outer half off the edge of the display.
+    /// `Frame::place` flips the offset for exactly that case.
+    const OFFSET: f32 = 0.0;
+    /// Corner radius at 96 dpi. Windows 11 rounds a window at 8 px; `paint` scales this by the
+    /// screen's dpi, because at 150 % the window's own corner is 12 physical pixels and a fixed 8
+    /// would cut across it.
+    const RADIUS: f32 = 8.0;
     /// Half the thickness of the solid line — 3 px across, counting both antialiased edges.
     const STROKE: f32 = 1.0;
-    /// How far the halo reaches outside the line.
-    const GLOW: f32 = 4.5;
+    /// How far the halo reaches outside the line. Short: a wide glow is what makes a border read as
+    /// "the window is bigger than it is".
+    const GLOW: f32 = 3.0;
     /// The frame follows the window on this tick. Fast enough to stay glued while a window is
     /// dragged, slow enough to cost nothing: one `GetWindowRect` per pinned window per tick.
     const TICK_MS: u64 = 33;
-    /// A picker that is armed and forgotten must let go of the mouse by itself; a hook that stays
-    /// installed with nothing on screen to explain it would leave the user unable to click.
-    const PICK_TIMEOUT: Duration = Duration::from_secs(60);
+    /// An armed picker that is forgotten must let go of the mouse by itself; a hook that stays
+    /// installed with nothing on screen to explain it would leave the user unable to click
+    /// anything. Reset on every successful pick, so pinning one window after another never times
+    /// out mid-way.
+    const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
     const PICK_TIMER: usize = 0x7A;
+    /// Posted by the hook to the picker thread when a window has been chosen. `WM_APP` is the
+    /// first message id Windows leaves to applications.
+    const WM_APP_PICK: u32 = WM_APP + 1;
 
     /// Cyan, in the notch's own family. The preview is the same hue at half strength so the two
     /// states read as one thing at two intensities rather than as two unrelated colours.
@@ -94,46 +125,78 @@ mod win {
     /// and cannot live in a `static`. This list is written by the picker's thread, read by the
     /// frame thread, and cleared on the way out.
     static PINNED: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
-    /// True while a picker is armed, so a second tray click cancels instead of stacking a second
-    /// hook. Both the tray menu and the frame thread read it.
-    static PICKING: AtomicBool = AtomicBool::new(false);
+    /// True while the picker is armed. The tray icon, its menu and the frame thread all read it.
+    static ARMED: AtomicBool = AtomicBool::new(false);
     /// The window under the pointer, updated by the hook and read by the frame thread. Zero when
     /// the pointer is over one of our own windows or over nothing.
     static CANDIDATE: AtomicIsize = AtomicIsize::new(0);
-    /// Where the accepted click landed. Zero means the picker was cancelled.
-    static RESULT: AtomicIsize = AtomicIsize::new(0);
+    /// Hand-off from the hook to the picker thread: the window the last click chose. The thread
+    /// swaps it back to zero, so a click that arrives while the previous one is being handled is
+    /// not lost.
+    static PICKED: AtomicIsize = AtomicIsize::new(0);
     /// The picker thread's id, so the hook callback — which gets no user data — can post it the
-    /// `WM_QUIT` that ends the message loop.
+    /// message that ends the mode.
     static PICK_TID: AtomicU32 = AtomicU32::new(0);
     static STOP: AtomicBool = AtomicBool::new(false);
+    /// Set when the mode is asked to end. The `WM_QUIT` carries the same request, but a mode asked
+    /// to stop in the few microseconds before its thread has published its id would otherwise miss
+    /// the message and stay armed with nobody asking for it.
+    static QUIT_REQ: AtomicBool = AtomicBool::new(false);
+    /// The app handle, so a pick can refresh the tray icon's own tooltip from the picker thread.
+    static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-    /// Arms the picker. Called from the tray menu; also the cancel path, since the menu item is
-    /// reachable again while a picker is armed.
-    pub fn begin_pick() {
-        if PICKING.swap(true, SeqCst) {
-            post_quit();
-            crate::applog("pin: picker cancelled from the tray");
-            return;
-        }
-        CANDIDATE.store(0, SeqCst);
-        RESULT.store(0, SeqCst);
+    /// Starts the frame thread and remembers the handle the tray notifications need.
+    pub fn start(app: tauri::AppHandle) {
+        let _ = APP.set(app);
         std::thread::spawn(|| {
-            let picked = run_pick();
-            CANDIDATE.store(0, SeqCst);
-            PICKING.store(false, SeqCst);
-            match picked {
-                Some(target) => toggle(target),
-                None => crate::applog("pin: nothing picked"),
+            // One screen DC for the life of the thread. `GetDC(NULL)` per repaint would leak a
+            // handle per resized frame — 30 a second while a window is dragged — and the 10 000
+            // handle limit is not far off.
+            let screen = unsafe { GetDC(HWND::default()) };
+            let mut frames: Vec<Frame> = Vec::new();
+            loop {
+                if STOP.load(SeqCst) {
+                    for f in frames.iter_mut() {
+                        f.destroy();
+                    }
+                    return;
+                }
+                step(&mut frames, screen);
+                std::thread::sleep(Duration::from_millis(TICK_MS));
             }
         });
     }
 
-    /// Lets go of every window this session pinned, stops an armed picker, and stops the frame
-    /// thread. Called on the way out: a window left topmost with no frame around it would look
-    /// like a bug and could only be undone by restarting the app that owns it.
-    pub fn shutdown() {
-        STOP.store(true, SeqCst);
-        post_quit();
+    /// How many windows this session is holding up. The tray tooltip and menu say so.
+    pub fn count() -> usize {
+        PINNED.lock().map(|g| g.len()).unwrap_or(0)
+    }
+
+    /// Whether the picker is catching clicks right now. The tray icon reads it to decide whether
+    /// its click starts or ends the mode.
+    pub fn is_armed() -> bool {
+        ARMED.load(SeqCst)
+    }
+
+    /// Arms the picker, or disarms it if it was already armed. Called by the tray icon's own click
+    /// and by the tray menu; the two are the same switch.
+    ///
+    /// A second call while the mode is on does not stack a second hook: it posts the quit that
+    /// makes the one running hook tear itself down.
+    pub fn toggle_mode() {
+        if ARMED.swap(true, SeqCst) {
+            post_quit();
+            crate::applog("pin: mode off from the tray");
+            return;
+        }
+        CANDIDATE.store(0, SeqCst);
+        PICKED.store(0, SeqCst);
+        QUIT_REQ.store(false, SeqCst);
+        std::thread::spawn(run_mode);
+    }
+
+    /// Lets go of every window this session pinned, without leaving the mode.
+    pub fn release_all() {
         let list: Vec<isize> = match PINNED.lock() {
             Ok(g) => g.clone(),
             Err(_) => Vec::new(),
@@ -155,45 +218,43 @@ mod win {
             g.clear();
         }
         if !list.is_empty() {
-            crate::applog(&format!("pin: released {} window(s) on quit", list.len()));
+            crate::applog(&format!("pin: released all {} window(s)", list.len()));
         }
+        notify();
     }
 
-    /// Starts the frame thread. Frames are created, painted and destroyed there and nowhere else:
-    /// a window belongs to the thread that made it, and this thread is the one that keeps looking
-    /// at their targets.
-    pub fn start() {
-        std::thread::spawn(|| {
-            // One screen DC for the life of the thread. `GetDC(NULL)` per repaint would leak a
-            // handle per resized frame — 30 a second while a window is dragged — and the 10 000
-            // handle limit is not far off.
-            let screen = unsafe { GetDC(HWND::default()) };
-            let mut frames: Vec<Frame> = Vec::new();
-            loop {
-                if STOP.load(SeqCst) {
-                    for f in frames.iter_mut() {
-                        f.destroy();
-                    }
-                    return;
-                }
-                step(&mut frames, screen);
-                std::thread::sleep(Duration::from_millis(TICK_MS));
-            }
-        });
+    /// Lets go of every window this session pinned, stops an armed picker, and stops the frame
+    /// thread. Called on the way out: a window left topmost with no frame around it would look
+    /// like a bug and could only be undone by restarting the app that owns it.
+    pub fn shutdown() {
+        STOP.store(true, SeqCst);
+        post_quit();
+        release_all();
     }
 
     fn hwnd_of(raw: isize) -> HWND {
         HWND(raw as *mut core::ffi::c_void)
     }
 
-    /// The picker's own loop. Returns the window that was clicked, or `None` for any way out that
-    /// is not a left click — right button, Escape, timeout, cancel.
-    fn run_pick() -> Option<isize> {
+    /// Tells the tray icon that the mode or the count changed. Cheap: one tooltip and a three-item
+    /// menu, both built on the main thread.
+    fn notify() {
+        if let Some(app) = APP.get() {
+            crate::tray::refresh_pin_tray(app);
+        }
+    }
+
+    /// The picker's own loop. Stays until it is told to stop; every pick it accepts resets the
+    /// idle clock rather than ending the mode, which is what lets the user pin one window after
+    /// another without going back to the tray.
+    fn run_mode() {
         unsafe {
-            let Ok(mouse) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
+            let Ok(hook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
             else {
                 crate::applog("pin: could not install the mouse hook");
-                return None;
+                ARMED.store(false, SeqCst);
+                notify();
+                return;
             };
             PICK_TID.store(GetCurrentThreadId(), SeqCst);
             // Seed the preview before the mouse moves. The pointer is already somewhere, and a
@@ -205,11 +266,24 @@ mod win {
             // A timer, not a keyboard hook: it wakes the loop often enough to notice Escape, and
             // it is the only thing here that could ever hang the mouse if it went wrong.
             let timer = SetTimer(HWND::default(), PICK_TIMER, 120, None);
-            let started = Instant::now();
+            let mut last = Instant::now();
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0 {
+            // The request is checked before the message is waited for: a stop that arrives before
+            // this thread published its id has no message to catch, and `swap` makes sure the
+            // next lap does not act on it twice.
+            while !QUIT_REQ.swap(false, SeqCst)
+                && GetMessageW(&mut msg, HWND::default(), 0, 0).0 > 0
+            {
+                if msg.message == WM_APP_PICK {
+                    let target = PICKED.swap(0, SeqCst);
+                    if target != 0 {
+                        toggle(target);
+                        last = Instant::now();
+                    }
+                    continue;
+                }
                 if msg.message == WM_TIMER {
-                    if GetAsyncKeyState(VK_ESCAPE.0 as i32) < 0 || started.elapsed() > PICK_TIMEOUT {
+                    if GetAsyncKeyState(VK_ESCAPE.0 as i32) < 0 || last.elapsed() > IDLE_TIMEOUT {
                         break;
                     }
                     continue;
@@ -221,19 +295,26 @@ mod win {
             if timer != 0 {
                 let _ = KillTimer(HWND::default(), timer);
             }
-            let _ = UnhookWindowsHookEx(mouse);
+            let _ = UnhookWindowsHookEx(hook);
             PICK_TID.store(0, SeqCst);
         }
-        let result = RESULT.swap(0, SeqCst);
-        (result != 0).then_some(result)
+        ARMED.store(false, SeqCst);
+        CANDIDATE.store(0, SeqCst);
+        crate::applog("pin: mode off");
+        notify();
     }
 
     /// Ends the message loop from anywhere, including from inside the hook callback.
     fn post_quit() {
+        QUIT_REQ.store(true, SeqCst);
+        post(WM_QUIT);
+    }
+
+    fn post(message: u32) {
         let tid = PICK_TID.load(SeqCst);
         if tid != 0 {
             unsafe {
-                let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+                let _ = PostThreadMessageW(tid, message, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -253,13 +334,20 @@ mod win {
                 CallNextHookEx(HHOOK::default(), code, wparam, lparam)
             }
             WM_LBUTTONDOWN => {
-                RESULT.store(target_at(info.pt).0 as isize, SeqCst);
-                post_quit();
-                // Swallow it: the window is being chosen, not clicked.
+                let target = target_at(info.pt);
+                if target.is_invalid() {
+                    // Not a pick: the desktop, the taskbar — including the pin icon that armed
+                    // this — or one of our own windows. All of them mean "I am done", which is
+                    // also the only way to end the mode by clicking the tray icon again.
+                    post_quit();
+                } else {
+                    PICKED.store(target.0 as isize, SeqCst);
+                    post(WM_APP_PICK);
+                }
+                // Swallow it either way: the window is being chosen, not clicked.
                 LRESULT(1)
             }
             WM_RBUTTONDOWN => {
-                RESULT.store(0, SeqCst);
                 post_quit();
                 LRESULT(1)
             }
@@ -271,9 +359,8 @@ mod win {
     ///
     /// Nothing means "this click is not a pick": our own windows (the notch and the settings page
     /// are already above everything, and framing them would be noise) and the shell's own
-    /// surfaces. The shell matters most — the tray icon that armed the picker lives in the
-    /// taskbar, so a second click on it would otherwise pin the taskbar itself instead of
-    /// cancelling, and the user would have no way out but Escape.
+    /// surfaces. The shell matters most — the tray icon that arms the picker lives in the taskbar,
+    /// so clicking it again would otherwise pin the taskbar itself.
     fn target_at(pt: POINT) -> HWND {
         unsafe {
             let under = WindowFromPoint(pt);
@@ -324,9 +411,39 @@ mod win {
         })
     }
 
+    /// The rectangle the window actually occupies on screen.
+    ///
+    /// `DwmGetWindowAttribute` with `DWMWA_EXTENDED_FRAME_BOUNDS` drops the invisible resize
+    /// border that `GetWindowRect` includes — 8 px on a stock window, which is exactly the gap
+    /// that made the first version of this frame look larger than the window. The fallback keeps
+    /// windows that DWM does not manage (some consoles, some games) from losing their frame
+    /// altogether; on those the stroke sits a little further out, which is the lesser evil.
+    fn visible_rect(hwnd: HWND) -> Option<RECT> {
+        let mut rc = RECT::default();
+        unsafe {
+            let ok = DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                &mut rc as *mut RECT as *mut core::ffi::c_void,
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_ok();
+            if ok && rc.right > rc.left && rc.bottom > rc.top {
+                return Some(rc);
+            }
+            if GetWindowRect(hwnd, &mut rc).is_err() {
+                return None;
+            }
+        }
+        Some(rc)
+    }
+
     /// Pins a window, or releases it if it was already pinned. `SetWindowPos` without
     /// `SWP_NOACTIVATE` on the way in, because the user just chose this window and expects it in
     /// front as well as on top.
+    ///
+    /// Toggling is what makes "pin the next one" and "let this one go" the same gesture, so the
+    /// mode can stay armed across several windows instead of closing after the first.
     fn toggle(target: isize) {
         let Ok(mut list) = PINNED.lock() else { return };
         if let Some(pos) = list.iter().position(|t| *t == target) {
@@ -358,13 +475,20 @@ mod win {
             list.push(target);
             crate::applog("pin: kept a window on top");
         }
+        drop(list);
+        notify();
     }
 
     /// Drops a window from the list without touching its z-order — used when it closed, or when
     /// something else un-pinned it, and the state is already what we would have set.
     fn forget(target: isize) {
         if let Ok(mut g) = PINNED.lock() {
+            let before = g.len();
             g.retain(|t| *t != target);
+            if g.len() != before {
+                drop(g);
+                notify();
+            }
         }
     }
 
@@ -400,8 +524,11 @@ mod win {
         y: i32,
         shown: bool,
         /// True when the target fills the screen. The stroke then has to go inside the window
-        /// instead of outside it, or it would be drawn past the edge of the display.
+        /// instead of straddling its edge, or its outer half would be drawn past the display.
         inner: bool,
+        /// The dpi the bitmap was drawn at, so a frame moved to a screen with different scaling
+        /// is redrawn rather than stretched.
+        dpi: u32,
         /// The memory DC and the 32-bit top-down bitmap `UpdateLayeredWindow` uploads from. Kept
         /// between ticks so a frame that only moves is never repainted.
         hdc: HDC,
@@ -441,6 +568,7 @@ mod win {
                     y: i32::MIN,
                     shown: false,
                     inner: false,
+                    dpi: 0,
                     hdc: HDC::default(),
                     bmp: HBITMAP::default(),
                     dirty: true,
@@ -481,11 +609,10 @@ mod win {
                     self.set_shown(false);
                     return;
                 }
-                let mut rc = RECT::default();
-                if GetWindowRect(target, &mut rc).is_err() {
+                let Some(rc) = visible_rect(target) else {
                     self.set_shown(false);
                     return;
-                }
+                };
                 let w = rc.right - rc.left + GROW * 2;
                 let h = rc.bottom - rc.top + GROW * 2;
                 if w < 8 || h < 8 {
@@ -495,9 +622,21 @@ mod win {
                 let x = rc.left - GROW;
                 let y = rc.top - GROW;
                 let inner = IsZoomed(target).as_bool();
-                if w != self.w || h != self.h || self.dirty || inner != self.inner {
+                // The target's own dpi, not the screen's: a frame around a window on a 100 %
+                // monitor must not take the 200 % monitor's corner radius.
+                let mut dpi = GetDpiForWindow(target);
+                if dpi == 0 {
+                    dpi = if screen.is_invalid() {
+                        96
+                    } else {
+                        GetDeviceCaps(screen, LOGPIXELSX).clamp(96, 480) as u32
+                    };
+                }
+                let dpi = dpi.clamp(96, 480);
+                if w != self.w || h != self.h || self.dirty || inner != self.inner || dpi != self.dpi {
                     self.inner = inner;
-                    self.paint(x, y, w, h, screen);
+                    self.dpi = dpi;
+                    self.paint(x, y, w, h, screen, dpi);
                     self.w = w;
                     self.h = h;
                     self.x = x;
@@ -520,7 +659,7 @@ mod win {
             self.set_shown(true);
         }
 
-        fn paint(&mut self, x: i32, y: i32, w: i32, h: i32, screen: HDC) {
+        fn paint(&mut self, x: i32, y: i32, w: i32, h: i32, screen: HDC, dpi: u32) {
             unsafe {
                 if screen.is_invalid() {
                     return;
@@ -558,7 +697,8 @@ mod win {
                 };
                 // A maximised window owns the whole screen, so its frame moves inside the edge.
                 let offset = if self.inner { -(STROKE + 1.0) } else { OFFSET };
-                render(bits as *mut u8, w, h, rgb, peak, offset);
+                let radius = RADIUS * (dpi as f32 / 96.0);
+                render(bits as *mut u8, w, h, rgb, peak, offset, radius);
 
                 let old = SelectObject(mem, HGDIOBJ(bmp.0));
                 let dst = POINT { x, y };
@@ -597,7 +737,7 @@ mod win {
         };
         let candidate = CANDIDATE.load(SeqCst);
         let mut want: Vec<(isize, bool)> = pinned.iter().map(|t| (*t, false)).collect();
-        if PICKING.load(SeqCst) && candidate != 0 && !want.iter().any(|(t, _)| *t == candidate) {
+        if ARMED.load(SeqCst) && candidate != 0 && !want.iter().any(|(t, _)| *t == candidate) {
             want.push((candidate, true));
         }
 
@@ -633,9 +773,9 @@ mod win {
     /// Fills a 32-bit premultiplied BGRA bitmap with the frame's ring and nothing else.
     ///
     /// The interior stays at alpha zero, so the window inside the frame is untouched — the stroke
-    /// sits just outside the window's own edge and its halo falls outside that. `offset` is the
+    /// is centred on the window's visible edge and its halo falls outside that. `offset` is the
     /// stroke's centre relative to that edge, and only a maximised window passes a negative one.
-    fn render(bits: *mut u8, w: i32, h: i32, rgb: [f32; 3], peak: f32, offset: f32) {
+    fn render(bits: *mut u8, w: i32, h: i32, rgb: [f32; 3], peak: f32, offset: f32, radius: f32) {
         let len = (w as usize) * (h as usize) * 4;
         unsafe {
             std::ptr::write_bytes(bits, 0, len);
@@ -653,7 +793,7 @@ mod win {
 
         for y in 0..h {
             let py = y as f32 + 0.5 - cy;
-            let full_row = py.abs() > half_h - RADIUS - band;
+            let full_row = py.abs() > half_h - radius - band;
             let mut x = 0;
             while x < w {
                 // Interior and the empty margin outside the halo: skip to the far edge in one
@@ -664,7 +804,7 @@ mod win {
                     continue;
                 }
                 let px = x as f32 + 0.5 - cx;
-                let d = sd_round_rect(px, py, half_w, half_h, RADIUS);
+                let d = sd_round_rect(px, py, half_w, half_h, radius);
                 let a = ring_alpha(d) * peak;
                 if a > 0.002 {
                     let i = ((y as usize) * (w as usize) + x as usize) * 4;
@@ -709,7 +849,7 @@ mod win {
 
     #[cfg(test)]
     mod tests {
-        use super::{ring_alpha, sd_round_rect, GLOW, RADIUS, STROKE};
+        use super::{ring_alpha, sd_round_rect, GLOW, GROW, RADIUS, STROKE};
 
         /// The outline is where the renderer expects it: at the rectangle's edge, not a pixel off.
         #[test]
@@ -725,7 +865,7 @@ mod win {
         }
 
         /// A 3 px line centred on the outline: solid in the middle, half-covered at each edge,
-        /// gone half a pixel further, and nothing on the window side at all.
+        /// gone half a pixel further.
         #[test]
         fn the_line_is_three_pixels_wide() {
             assert_eq!(ring_alpha(0.0), 1.0, "the centre of the line");
@@ -744,6 +884,25 @@ mod win {
             assert!(ring_alpha(STROKE + GLOW * 0.5) > 0.0);
             assert_eq!(ring_alpha(STROKE + GLOW), 0.0, "the halo ends where it says");
             assert_eq!(ring_alpha(STROKE + GLOW + 1.0), 0.0);
+        }
+
+        /// The bitmap is only `GROW` wider than the window on each side, and the ink that reaches
+        /// furthest is the stroke's outer half plus the halo. If that ever exceeded `GROW` the
+        /// halo would be clipped into a hard edge exactly where the frame ends.
+        #[test]
+        fn the_frame_window_is_wide_enough_for_its_ink() {
+            let reach = super::OFFSET + STROKE + GLOW;
+            assert!(
+                reach <= GROW as f32,
+                "the ink reaches {reach} px past the edge but the window only has {GROW}"
+            );
+        }
+
+        /// The stroke is centred on the window's visible edge, which is what makes the frame sit
+        /// against the window instead of floating outside it.
+        #[test]
+        fn the_stroke_sits_on_the_edge_not_outside_it() {
+            assert_eq!(super::OFFSET, 0.0);
         }
     }
 }
