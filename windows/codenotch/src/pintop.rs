@@ -626,7 +626,7 @@ mod win {
                     return;
                 }
                 let raw = popup.0 as isize;
-                if pinned.iter().any(|t| *t == raw) {
+                if pinned.contains(&raw) {
                     // One of the windows the user pinned himself: the frame thread already keeps
                     // its z-order, and lifting it here would fight it.
                     return;
@@ -677,7 +677,7 @@ mod win {
             // once — that is the point of the mode — and the first one in the list is not
             // necessarily the one this popup came out of.
             let mut best: Option<(i64, isize)> = None;
-            for (host, p) in hosts.iter().filter(|(_, p)| *p == pid) {
+            for (host, _) in hosts.iter().filter(|(_, p)| *p == pid) {
                 let Some(b) = visible_rect(hwnd_of(*host)) else { continue };
                 let Some(cover) = could_drop_from(a, b) else { continue };
                 if best.is_none_or(|(prev, _)| cover > prev) {
