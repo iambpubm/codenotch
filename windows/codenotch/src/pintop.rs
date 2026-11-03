@@ -52,7 +52,7 @@ mod win {
     use std::sync::OnceLock;
     use std::time::{Duration, Instant};
 
-    use windows::core::w;
+    use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{
         COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
     };
@@ -66,15 +66,17 @@ mod win {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, CreateWindowExW, DestroyWindow, DispatchMessageW, GetAncestor, GetClassNameW,
-        GetCursorPos, GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-        IsIconic, IsWindow, IsWindowVisible, IsZoomed, KillTimer, PostThreadMessageW, SetTimer,
-        SetWindowPos, SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx, UpdateLayeredWindow,
-        WindowFromPoint, GA_ROOT, GWL_EXSTYLE, HHOOK, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, MSG,
-        MSLLHOOKSTRUCT, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        ULW_ALPHA, WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONDOWN,
-        WM_TIMER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-        WS_POPUP,
+        CallNextHookEx, CreateWindowExW, DestroyWindow, DispatchMessageW, FindWindowExW, GetAncestor,
+        GetClassNameW, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindow,
+        GetWindowLongPtrW, GetWindowRect,
+        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, KillTimer,
+        PostThreadMessageW, SetTimer, SetWindowPos, SetWindowsHookExW, ShowWindow,
+        UnhookWindowsHookEx, UpdateLayeredWindow, WindowFromPoint, GA_ROOT, GWL_EXSTYLE,
+        GW_OWNER,
+        HHOOK, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, MSG, MSLLHOOKSTRUCT, SW_HIDE, SW_SHOWNOACTIVATE,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, ULW_ALPHA, WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN,
+        WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONDOWN, WM_TIMER, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     };
 
     /// Where the frame window sits relative to the window it frames, in physical pixels. Just wide
@@ -102,6 +104,23 @@ mod win {
     /// The frame follows the window on this tick. Fast enough to stay glued while a window is
     /// dragged, slow enough to cost nothing: one `GetWindowRect` per pinned window per tick.
     const TICK_MS: u64 = 33;
+    /// How often the frame thread looks for windows *owned* by a pinned one. A program's own
+    /// dropdowns, menus and pickers (WeChat's emoji panel is one) are separate top-level windows
+    /// that are not topmost themselves, so pinning the window they belong to covers them up: the
+    /// user clicks the emoji button and nothing appears. Lifting them as they show keeps the
+    /// program behaving as it did. 60 ms is two frame ticks — short enough that the panel is up
+    /// before the user has finished moving the pointer into it.
+    const POPUP_SCAN_MS: u64 = 60;
+    /// A window this small in either direction is never a dropdown: it is a hidden scratch window
+    /// or a caret, and lifting it would only put handles in the topmost band for nothing.
+    const MIN_POPUP_SIDE: i32 = 8;
+    /// A window this close to the size of the pinned one is another window of the same program,
+    /// not something that dropped out of it: Directory Opus opens listers, and Explorer opens
+    /// folder windows, at exactly the size of the last one.
+    const SAME_SIZE_PCT: i32 = 90;
+    /// How much of a popup must be over its window before it counts as belonging to it. A context
+    /// menu hangs a little over the edge; it never sits mostly outside.
+    const OVERLAP_PCT: i64 = 70;
     /// An armed picker that is forgotten must let go of the mouse by itself; a hook that stays
     /// installed with nothing on screen to explain it would leave the user unable to click
     /// anything. Reset on every successful pick, so pinning one window after another never times
@@ -144,6 +163,10 @@ mod win {
     static QUIT_REQ: AtomicBool = AtomicBool::new(false);
     /// The app handle, so a pick can refresh the tray icon's own tooltip from the picker thread.
     static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+    /// Windows this module raised because they are a pinned window's own popup, as
+    /// `(owner, popup)`. Kept so releasing a window can put them back: a dropdown left topmost
+    /// after its parent is not would float over everything with nothing to explain it.
+    static LIFTED: std::sync::Mutex<Vec<(isize, isize)>> = std::sync::Mutex::new(Vec::new());
 
     /// Starts the frame thread and remembers the handle the tray notifications need.
     pub fn start(app: tauri::AppHandle) {
@@ -154,6 +177,7 @@ mod win {
             // handle limit is not far off.
             let screen = unsafe { GetDC(HWND::default()) };
             let mut frames: Vec<Frame> = Vec::new();
+            let mut last_popup_scan = Instant::now();
             loop {
                 if STOP.load(SeqCst) {
                     for f in frames.iter_mut() {
@@ -162,6 +186,12 @@ mod win {
                     return;
                 }
                 step(&mut frames, screen);
+                // Off the frame's own path: this walks the top-level window list, which is a few
+                // hundred handle lookups, and none of it is needed 30 times a second.
+                if last_popup_scan.elapsed() >= Duration::from_millis(POPUP_SCAN_MS) {
+                    last_popup_scan = Instant::now();
+                    lift_owned_popups();
+                }
                 std::thread::sleep(Duration::from_millis(TICK_MS));
             }
         });
@@ -213,6 +243,7 @@ mod win {
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                 );
             }
+            drop_owned_popups(*target);
         }
         if let Ok(mut g) = PINNED.lock() {
             g.clear();
@@ -448,6 +479,7 @@ mod win {
         let Ok(mut list) = PINNED.lock() else { return };
         if let Some(pos) = list.iter().position(|t| *t == target) {
             list.remove(pos);
+            drop(list);
             unsafe {
                 let _ = SetWindowPos(
                     hwnd_of(target),
@@ -459,23 +491,25 @@ mod win {
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                 );
             }
+            drop_owned_popups(target);
             crate::applog("pin: released a window");
-        } else {
-            unsafe {
-                let _ = SetWindowPos(
-                    hwnd_of(target),
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE,
-                );
-            }
-            list.push(target);
-            crate::applog("pin: kept a window on top");
+            notify();
+            return;
         }
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd_of(target),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE,
+            );
+        }
+        list.push(target);
         drop(list);
+        crate::applog("pin: kept a window on top");
         notify();
     }
 
@@ -511,6 +545,207 @@ mod win {
             }
         }
         true
+    }
+
+    /// Walks the top-level window list in z-order, handing each window and its owner to `visit`.
+    ///
+    /// `FindWindowExW` with a null parent and a null class is the cheapest way to do this: one
+    /// call per window, no callback, and unlike `EnumWindows` it can start from where it stopped.
+    fn walk_owned(mut visit: impl FnMut(HWND, HWND)) {
+        let mut after = HWND::default();
+        loop {
+            let Ok(next) = (unsafe {
+                FindWindowExW(HWND::default(), after, PCWSTR::null(), PCWSTR::null())
+            }) else {
+                break;
+            };
+            after = next;
+            if let Ok(owner) = unsafe { GetWindow(next, GW_OWNER) } {
+                visit(next, owner);
+            }
+        }
+    }
+
+    /// Raises the windows a pinned window owns.
+    ///
+    /// Pinning a window makes *it* topmost; the dropdowns, menus and pickers it owns are ordinary
+    /// windows, so they end up behind it — the user clicks WeChat's emoji button and the panel
+    /// appears underneath the chat window, which reads as "the emoji panel is broken". This is the
+    /// one cost of using the topmost band that the user cannot see coming, so it is paid here: each
+    /// owned window is lifted the first time it shows, and left alone afterwards.
+    ///
+    /// Nothing else in this module touches the z-order of a window the user did not pick.
+    fn lift_owned_popups() {
+        let pinned: Vec<isize> = match PINNED.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => return,
+        };
+        if pinned.is_empty() {
+            return;
+        }
+        // The pinned windows' process ids, so the walk can reject every other process's windows
+        // for the price of one call instead of five.
+        //
+        // Only the foreground process is considered. A program's dropdowns and pickers can only be
+        // on screen while its own window has focus, so nothing is lost, and everything that is not
+        // the program being used at this moment is skipped before a single extra call is made.
+        let mut fg_pid = 0u32;
+        unsafe {
+            let fg = GetForegroundWindow();
+            if !fg.is_invalid() {
+                GetWindowThreadProcessId(fg, Some(&mut fg_pid as *mut u32));
+            }
+        }
+        if fg_pid == 0 {
+            return;
+        }
+        let mut hosts: Vec<(isize, u32)> = Vec::new();
+        for target in &pinned {
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd_of(*target), Some(&mut pid as *mut u32)) };
+            if pid != 0 && pid == fg_pid {
+                hosts.push((*target, pid));
+            }
+        }
+        if hosts.is_empty() {
+            return;
+        }
+        // Windows closed since they were lifted cannot be put back, and their handles may already
+        // belong to something else.
+        if let Ok(mut lifted) = LIFTED.lock() {
+            lifted.retain(|(_, popup)| unsafe { IsWindow(hwnd_of(*popup)).as_bool() });
+        }
+        walk_owned(|popup, owner| {
+            unsafe {
+                // A hidden owned window is a scratch buffer — size 0, never drawn. Lifting it would
+                // only add handles to the topmost band for nothing.
+                if !IsWindowVisible(popup).as_bool() {
+                    return;
+                }
+                if GetWindowLongPtrW(popup, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0 {
+                    return;
+                }
+                let raw = popup.0 as isize;
+                if pinned.iter().any(|t| *t == raw) {
+                    // One of the windows the user pinned himself: the frame thread already keeps
+                    // its z-order, and lifting it here would fight it.
+                    return;
+                }
+                let Some(host) = host_of(popup, owner, &hosts) else { return };
+                let _ = SetWindowPos(
+                    popup,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+                if let Ok(mut lifted) = LIFTED.lock() {
+                    if !lifted.iter().any(|(_, p)| *p == raw) {
+                        lifted.push((host, raw));
+                    }
+                }
+            }
+        });
+    }
+
+    /// Which pinned window a popup belongs to, if any.
+    ///
+    /// `GW_OWNER` first, because that is what "this window belongs to that one" means on Windows
+    /// and it is the cheap answer. It is not enough on its own: Qt — WeChat is one — hangs its
+    /// popups off an internal `QWindowPopupSaveBits` scratch window rather than off the frame the
+    /// user sees, and that chain dead-ends at owner 0. Style does not help either: a Qt main window
+    /// carries `WS_POPUP` just like its dropdowns do, so the class and the style of the two are the
+    /// same.
+    ///
+    /// What is left is geometry, and it is enough. A dropdown, a menu or an emoji picker is never
+    /// larger than the window it drops out of, and it overlaps it substantially — while a second
+    /// chat window in the same program sits wherever the user put it. 70 % covers a context menu
+    /// that hangs a little over the edge, which is the one case that is not fully inside.
+    fn host_of(popup: HWND, owner: HWND, hosts: &[(isize, u32)]) -> Option<isize> {
+        let owner = owner.0 as isize;
+        if let Some((host, _)) = hosts.iter().find(|(t, _)| *t == owner) {
+            return Some(*host);
+        }
+        unsafe {
+            // One call rejects every window in every other process, which is most of them.
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(popup, Some(&mut pid as *mut u32));
+            let a = visible_rect(popup)?;
+            // The pinned windows of the same program, best overlap wins. Several can be pinned at
+            // once — that is the point of the mode — and the first one in the list is not
+            // necessarily the one this popup came out of.
+            let mut best: Option<(i64, isize)> = None;
+            for (host, p) in hosts.iter().filter(|(_, p)| *p == pid) {
+                let Some(b) = visible_rect(hwnd_of(*host)) else { continue };
+                let Some(cover) = could_drop_from(a, b) else { continue };
+                if best.is_none_or(|(prev, _)| cover > prev) {
+                    best = Some((cover, *host));
+                }
+            }
+            best.map(|(_, host)| host)
+        }
+    }
+
+    /// How much of `popup` sits over `host`, if it could be a dropdown of it at all.
+    ///
+    /// Pure, so the thresholds can be tested without a desktop: everything here is a rule about
+    /// rectangles, and a rule that can only be checked by opening WeChat's emoji panel is a rule
+    /// that never gets checked. Returns the overlap in percentage-points × area so the caller can
+    /// pick the best host; `None` when it is not a dropdown.
+    fn could_drop_from(popup: RECT, host: RECT) -> Option<i64> {
+        let (aw, ah) = (popup.right - popup.left, popup.bottom - popup.top);
+        let (bw, bh) = (host.right - host.left, host.bottom - host.top);
+        if aw < MIN_POPUP_SIDE || ah < MIN_POPUP_SIDE || bw <= 0 || bh <= 0 {
+            return None;
+        }
+        // A dropdown is never larger than the window it drops out of.
+        if aw > bw || ah > bh {
+            return None;
+        }
+        // Nor is it the same size: that is another window of the same program.
+        if aw * 100 >= bw * SAME_SIZE_PCT && ah * 100 >= bh * SAME_SIZE_PCT {
+            return None;
+        }
+        let w = (popup.right.min(host.right) - popup.left.max(host.left)).max(0) as i64;
+        let h = (popup.bottom.min(host.bottom) - popup.top.max(host.top)).max(0) as i64;
+        let cover = w * h * 100;
+        if cover < aw as i64 * ah as i64 * OVERLAP_PCT {
+            return None;
+        }
+        Some(cover)
+    }
+
+    /// Puts back what `lift_owned_popups` lifted for one window that is being released.
+    ///
+    /// Only the windows this module raised, so a popup its program pinned for itself is left as
+    /// its program wants it.
+    fn drop_owned_popups(target: isize) {
+        let Ok(mut lifted) = LIFTED.lock() else { return };
+        let mut kept = Vec::with_capacity(lifted.len());
+        for (owner, popup) in lifted.drain(..) {
+            if owner != target {
+                kept.push((owner, popup));
+                continue;
+            }
+            let hwnd = hwnd_of(popup);
+            unsafe {
+                if !IsWindow(hwnd).as_bool() {
+                    continue;
+                }
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        *lifted = kept;
     }
 
     struct Frame {
@@ -912,6 +1147,72 @@ mod win {
         #[test]
         fn the_stroke_sits_on_the_edge_not_outside_it() {
             assert_eq!(super::OFFSET, 0.0);
+        }
+
+        use super::{could_drop_from, RECT};
+
+        /// A rectangle as Win32 reports one: left, top, width, height.
+        fn rect(left: i32, top: i32, width: i32, height: i32) -> RECT {
+            RECT {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            }
+        }
+
+        /// The case the rule exists for: WeChat's emoji panel is a window of its own, it opens
+        /// inside the chat window, and pinning the chat window used to bury it.
+        #[test]
+        fn a_panel_inside_its_window_could_drop_from_it() {
+            let cover = could_drop_from(rect(300, 240, 320, 400), rect(100, 100, 900, 700));
+            assert_eq!(cover, Some(12_800_000), "a panel wholly inside covers all of it");
+        }
+
+        /// A context menu hangs a little over the edge of the window it drops from, and must still
+        /// count as that window's: 260 of its 300 px are over it.
+        #[test]
+        fn a_menu_hanging_over_the_edge_could_still_drop_from_it() {
+            let cover = could_drop_from(rect(740, 200, 300, 400), rect(100, 100, 900, 700));
+            assert_eq!(cover, Some(10_400_000));
+        }
+
+        /// The same menu with only a fifth of itself over the window is a window of its own, and
+        /// lifting it would put it over everything with nothing to explain why.
+        #[test]
+        fn a_menu_mostly_outside_is_not_a_dropdown() {
+            assert_eq!(
+                could_drop_from(rect(940, 200, 300, 400), rect(100, 100, 900, 700)),
+                None
+            );
+        }
+
+        /// Another window of the same program: never larger than the pinned one, and never the
+        /// same size — Directory Opus opens listers, Explorer folder windows, at the last size.
+        #[test]
+        fn another_window_of_the_program_is_not_a_dropdown() {
+            let host = rect(100, 100, 900, 700);
+            assert_eq!(could_drop_from(rect(100, 100, 1000, 700), host), None, "larger");
+            assert_eq!(could_drop_from(rect(100, 100, 900, 700), host), None, "the same size");
+            assert_eq!(could_drop_from(rect(100, 100, 810, 630), host), None, "90 % of it");
+            assert!(
+                could_drop_from(rect(100, 100, 801, 623), host).is_some(),
+                "just under the guard it is a dropdown again"
+            );
+        }
+
+        /// A hidden scratch window is size 0 and a caret is a few pixels across; neither is a
+        /// dropdown, and lifting them would only add handles to the topmost band.
+        #[test]
+        fn a_speck_is_not_a_dropdown() {
+            let host = rect(100, 100, 900, 700);
+            assert_eq!(could_drop_from(rect(300, 300, 7, 40), host), None, "under the minimum");
+            assert_eq!(
+                could_drop_from(rect(300, 300, 100, 100), rect(0, 0, 0, 0)),
+                None,
+                "a host with no area at all"
+            );
+            assert_eq!(could_drop_from(rect(300, 300, 8, 8), host), Some(6_400), "on it");
         }
     }
 }
