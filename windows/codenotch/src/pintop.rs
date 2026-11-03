@@ -54,7 +54,7 @@ mod win {
 
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{
-        COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
+        COLORREF, HANDLE, HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
     };
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::Graphics::Gdi::{
@@ -63,6 +63,7 @@ mod win {
         DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, LOGPIXELSX,
     };
     use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -121,6 +122,10 @@ mod win {
     /// How much of a popup must be over its window before it counts as belonging to it. A context
     /// menu hangs a little over the edge; it never sits mostly outside.
     const OVERLAP_PCT: i64 = 70;
+    /// How far up an owner chain to look. Two levels cover the observed cases — Qt's scratch window
+    /// and the Chromium window hanging off it — and a bound is what keeps a malformed chain from
+    /// walking forever.
+    const MAX_OWNER_DEPTH: usize = 6;
     /// An armed picker that is forgotten must let go of the mouse by itself; a hook that stays
     /// installed with nothing on screen to explain it would leave the user unable to click
     /// anything. Reset on every successful pick, so pinning one window after another never times
@@ -167,6 +172,38 @@ mod win {
     /// `(owner, popup)`. Kept so releasing a window can put them back: a dropdown left topmost
     /// after its parent is not would float over everything with nothing to explain it.
     static LIFTED: std::sync::Mutex<Vec<(isize, isize)>> = std::sync::Mutex::new(Vec::new());
+    /// How many times a pinned window has had to be put back on top. Counted rather than logged,
+    /// because it happens for as long as the other program keeps clearing the bit.
+    static DEMOTIONS: AtomicU32 = AtomicU32::new(0);
+    /// Frame ticks so far. Only used to run the cheap upkeep every few ticks instead of all of them.
+    static TICKS: AtomicU32 = AtomicU32::new(0);
+
+    /// The four answers the gesture gives, as raw WAV bytes in the binary: no files to install, no
+    /// crate to pull in, and `PlaySoundW` reads them straight from memory.
+    ///
+    /// Rising for "on top", falling for "let go", and a single tick each for the mode arming and
+    /// disarming — the mode is invisible otherwise, and "did it hear me?" is the whole question the
+    /// user has when he clicks the tray icon.
+    const PIN_SOUND: &[u8] = include_bytes!("../sounds/pin.wav");
+    const UNPIN_SOUND: &[u8] = include_bytes!("../sounds/unpin.wav");
+    const ARMED_SOUND: &[u8] = include_bytes!("../sounds/armed.wav");
+    const OFF_SOUND: &[u8] = include_bytes!("../sounds/off.wav");
+
+    /// Plays one of them and returns at once.
+    ///
+    /// `SND_ASYNC` matters as much as `SND_MEMORY`: this is called from the low-level mouse hook and
+    /// from the frame loop, and neither may wait for 200 ms of audio. The bytes are a WAV file, and
+    /// the API wants a `PCWSTR` — it takes the pointer and ignores the type, which is why the cast
+    /// is here rather than a string.
+    fn chime(wav: &'static [u8]) {
+        unsafe {
+            let _ = PlaySoundW(
+                PCWSTR(wav.as_ptr() as *const u16),
+                HMODULE::default(),
+                SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
+            );
+        }
+    }
 
     /// Starts the frame thread and remembers the handle the tray notifications need.
     pub fn start(app: tauri::AppHandle) {
@@ -222,6 +259,9 @@ mod win {
         CANDIDATE.store(0, SeqCst);
         PICKED.store(0, SeqCst);
         QUIT_REQ.store(false, SeqCst);
+        // The mode has no on-screen presence of its own; this tick is how the user learns that the
+        // next click will pick a window instead of clicking it.
+        chime(ARMED_SOUND);
         std::thread::spawn(run_mode);
     }
 
@@ -331,6 +371,9 @@ mod win {
         }
         ARMED.store(false, SeqCst);
         CANDIDATE.store(0, SeqCst);
+        // The one place the mode actually ends, whichever way it ended -- the tray icon again, the
+        // right button, Escape or the idle timeout -- so the tick belongs here and nowhere else.
+        chime(OFF_SOUND);
         crate::applog("pin: mode off");
         notify();
     }
@@ -492,6 +535,7 @@ mod win {
                 );
             }
             drop_owned_popups(target);
+            chime(UNPIN_SOUND);
             crate::applog("pin: released a window");
             notify();
             return;
@@ -508,8 +552,10 @@ mod win {
             );
         }
         list.push(target);
+        let count = list.len();
         drop(list);
-        crate::applog("pin: kept a window on top");
+        chime(PIN_SOUND);
+        crate::applog(&format!("pin: kept a window on top ({count} now)"));
         notify();
     }
 
@@ -529,29 +575,64 @@ mod win {
     /// Whether a frame's target still deserves one. A window that closed, or that some other
     /// program un-pinned, must lose its frame as well: a border around a window that is no longer
     /// topmost is a lie the user cannot clear.
-    fn still_wanted(target: isize, preview: bool) -> bool {
+    fn still_wanted(target: isize) -> bool {
         let hwnd = hwnd_of(target);
         unsafe {
             if !IsWindow(hwnd).as_bool() {
                 forget(target);
                 return false;
             }
-            if !preview {
-                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-                if ex & WS_EX_TOPMOST.0 == 0 {
-                    forget(target);
-                    return false;
-                }
-            }
         }
         true
     }
 
-    /// Walks the top-level window list in z-order, handing each window and its owner to `visit`.
+    /// Puts the topmost bit back on any pinned window that lost it.
+    ///
+    /// The bit is not ours to keep: several programs clear it while laying themselves out — WeChat
+    /// and QQ both do, once a second or so, and both were caught doing it on this machine — and a
+    /// window whose bit was cleared is simply a window that stopped being pinned. Believing the bit
+    /// and giving up when it is gone is what made a pin vanish on its own, which reads as "sometimes
+    /// it is just not on top". So it is re-asserted instead, for the price of one query per pinned
+    /// window per tick.
+    fn hold_on_top(pinned: &[isize]) {
+        for target in pinned {
+            let hwnd = hwnd_of(*target);
+            unsafe {
+                if !IsWindow(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+                    continue;
+                }
+                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+                if ex & WS_EX_TOPMOST.0 != 0 {
+                    continue;
+                }
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+                // Worth knowing that it happens, but not worth a line every 33 ms: the whole point
+                // is that this is routine. The first one, then roughly every seven seconds.
+                let n = DEMOTIONS.fetch_add(1, SeqCst) + 1;
+                if n == 1 || n % 200 == 0 {
+                    crate::applog(&format!(
+                        "pin: put a window back on top {n} time(s) so far, something keeps demoting it"
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Walks the top-level window list in z-order, front first, handing each window and its owner
+    /// to `visit`. The owner is a null handle for the many windows that have none — which includes
+    /// the ones this module cares most about, so it is handed over rather than skipped.
     ///
     /// `FindWindowExW` with a null parent and a null class is the cheapest way to do this: one
     /// call per window, no callback, and unlike `EnumWindows` it can start from where it stopped.
-    fn walk_owned(mut visit: impl FnMut(HWND, HWND)) {
+    fn walk_top_level(mut visit: impl FnMut(HWND, HWND)) {
         let mut after = HWND::default();
         loop {
             let Ok(next) = (unsafe {
@@ -560,19 +641,53 @@ mod win {
                 break;
             };
             after = next;
-            if let Ok(owner) = unsafe { GetWindow(next, GW_OWNER) } {
-                visit(next, owner);
-            }
+            let owner = unsafe { GetWindow(next, GW_OWNER) }.unwrap_or_default();
+            visit(next, owner);
         }
     }
 
-    /// Raises the windows a pinned window owns.
+    /// The process a window belongs to, or 0 if the handle is gone.
+    fn pid_of(hwnd: HWND) -> u32 {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32)) };
+        pid
+    }
+
+    /// The processes in a window's owner chain, nearest first, and whether `hosts` is in there.
     ///
-    /// Pinning a window makes *it* topmost; the dropdowns, menus and pickers it owns are ordinary
-    /// windows, so they end up behind it — the user clicks WeChat's emoji button and the panel
-    /// appears underneath the chat window, which reads as "the emoji panel is broken". This is the
-    /// one cost of using the topmost band that the user cannot see coming, so it is paid here: each
-    /// owned window is lifted the first time it shows, and left alone afterwards.
+    /// A window can be *drawn* by a process that does not own it: WeChat 4 renders its panels in a
+    /// Chromium helper (`WeChatAppEx.exe`), and what hangs the panel off the chat window is a
+    /// scratch window back in the chat window's own process. Comparing only the popup's pid
+    /// therefore rejects the very window this exists for, and following the chain is what puts it
+    /// back.
+    fn chain_reaches(owner: HWND, hosts: &[(isize, u32)]) -> Option<isize> {
+        let mut cur = owner;
+        for _ in 0..MAX_OWNER_DEPTH {
+            if cur.is_invalid() {
+                return None;
+            }
+            let pid = pid_of(cur);
+            if pid != 0 {
+                if let Some((host, _)) = hosts.iter().find(|(_, p)| *p == pid) {
+                    return Some(*host);
+                }
+            }
+            cur = match unsafe { GetWindow(cur, GW_OWNER) } {
+                Ok(next) => next,
+                Err(_) => return None,
+            };
+        }
+        None
+    }
+
+    /// Raises the windows a pinned window put on screen, and keeps them in the order it showed
+    /// them.
+    ///
+    /// Pinning a window makes *it* topmost; the dropdowns, menus and pickers it puts up are
+    /// ordinary windows, so they end up behind it — the user clicks WeChat's emoji button and the
+    /// panel appears underneath the chat window, which reads as "the emoji panel is broken". This
+    /// is the one cost of using the topmost band that the user cannot see coming, so it is paid
+    /// here: each of those windows is lifted the first time it shows, and left alone afterwards.
     ///
     /// Nothing else in this module touches the z-order of a window the user did not pick.
     fn lift_owned_popups() {
@@ -580,42 +695,34 @@ mod win {
             Ok(g) => g.clone(),
             Err(_) => return,
         };
+        // Before the focus test, and whatever happens next: a raised window that is no longer
+        // showing must go back down even while another program is in front, or it floats there.
+        drop_stale_lifted(&pinned);
         if pinned.is_empty() {
             return;
         }
-        // The pinned windows' process ids, so the walk can reject every other process's windows
-        // for the price of one call instead of five.
-        //
-        // Only the foreground process is considered. A program's dropdowns and pickers can only be
-        // on screen while its own window has focus, so nothing is lost, and everything that is not
-        // the program being used at this moment is skipped before a single extra call is made.
-        let mut fg_pid = 0u32;
-        unsafe {
-            let fg = GetForegroundWindow();
-            if !fg.is_invalid() {
-                GetWindowThreadProcessId(fg, Some(&mut fg_pid as *mut u32));
-            }
-        }
-        if fg_pid == 0 {
-            return;
-        }
-        let mut hosts: Vec<(isize, u32)> = Vec::new();
-        for target in &pinned {
-            let mut pid = 0u32;
-            unsafe { GetWindowThreadProcessId(hwnd_of(*target), Some(&mut pid as *mut u32)) };
-            if pid != 0 && pid == fg_pid {
-                hosts.push((*target, pid));
-            }
-        }
+        let hosts: Vec<(isize, u32)> = pinned
+            .iter()
+            .map(|t| (*t, pid_of(hwnd_of(*t))))
+            .filter(|(_, pid)| *pid != 0)
+            .collect();
         if hosts.is_empty() {
             return;
         }
-        // Windows closed since they were lifted cannot be put back, and their handles may already
-        // belong to something else.
-        if let Ok(mut lifted) = LIFTED.lock() {
-            lifted.retain(|(_, popup)| unsafe { IsWindow(hwnd_of(*popup)).as_bool() });
+        // Only while the program being pinned is the one in use. A program can only be showing a
+        // dropdown while it, or something it owns, has focus — and everything else on the desktop
+        // is skipped before a single further call is made. Following the chain here matters as
+        // much as it does below: the emoji panel's own window belongs to a helper process, so a
+        // plain pid comparison would call the app unfocused exactly when it is not.
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_invalid() || chain_reaches(fg, &hosts).is_none() {
+            return;
         }
-        walk_owned(|popup, owner| {
+        // Collected first, then raised from the bottom of the app's own stack upwards: raising a
+        // backdrop after the panel that sits on it would put the backdrop on top of the panel.
+        // WeChat has exactly that pair — a 900 x 900 save-bits window under a 711 x 531 panel.
+        let mut queue: Vec<(isize, HWND)> = Vec::new();
+        walk_top_level(|popup, owner| {
             unsafe {
                 // A hidden owned window is a scratch buffer — size 0, never drawn. Lifting it would
                 // only add handles to the topmost band for nothing.
@@ -625,15 +732,20 @@ mod win {
                 if GetWindowLongPtrW(popup, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0 {
                     return;
                 }
-                let raw = popup.0 as isize;
-                if pinned.contains(&raw) {
+                if pinned.contains(&(popup.0 as isize)) {
                     // One of the windows the user pinned himself: the frame thread already keeps
                     // its z-order, and lifting it here would fight it.
                     return;
                 }
-                let Some(host) = host_of(popup, owner, &hosts) else { return };
+                if let Some(host) = host_of(popup, owner, &hosts) {
+                    queue.push((host, popup));
+                }
+            }
+        });
+        for (host, popup) in queue.iter().rev() {
+            unsafe {
                 let _ = SetWindowPos(
-                    popup,
+                    *popup,
                     HWND_TOPMOST,
                     0,
                     0,
@@ -641,51 +753,86 @@ mod win {
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                 );
-                if let Ok(mut lifted) = LIFTED.lock() {
-                    if !lifted.iter().any(|(_, p)| *p == raw) {
-                        lifted.push((host, raw));
-                    }
+            }
+            let raw = popup.0 as isize;
+            if let Ok(mut lifted) = LIFTED.lock() {
+                if !lifted.iter().any(|(_, p)| *p == raw) {
+                    lifted.push((*host, raw));
                 }
             }
-        });
+            crate::applog(&format!("pin: lifted {} ({})", class_name(*popup), described(*popup)));
+        }
     }
 
     /// Which pinned window a popup belongs to, if any.
     ///
-    /// `GW_OWNER` first, because that is what "this window belongs to that one" means on Windows
-    /// and it is the cheap answer. It is not enough on its own: Qt — WeChat is one — hangs its
-    /// popups off an internal `QWindowPopupSaveBits` scratch window rather than off the frame the
-    /// user sees, and that chain dead-ends at owner 0. Style does not help either: a Qt main window
-    /// carries `WS_POPUP` just like its dropdowns do, so the class and the style of the two are the
-    /// same.
+    /// Three answers, cheapest first, and all three are needed on one machine:
     ///
-    /// What is left is geometry, and it is enough. A dropdown, a menu or an emoji picker is never
-    /// larger than the window it drops out of, and it overlaps it substantially — while a second
-    /// chat window in the same program sits wherever the user put it. 70 % covers a context menu
-    /// that hangs a little over the edge, which is the one case that is not fully inside.
+    /// * The owner *is* the pinned window. That is what ownership means on Windows, and it settles
+    ///   the ordinary case with no geometry at all.
+    /// * The owner chain reaches the pinned window's *process*. This is the one that matters for
+    ///   WeChat 4: it draws its panels in a Chromium helper (`WeChatAppEx.exe`), and hangs them off
+    ///   a scratch window — `Qt51514QWindowToolSaveBits`, owner 0 — back in the chat window's own
+    ///   process. The panel's pid is therefore the helper's, and its owner is a window the user
+    ///   never sees; both of the obvious tests reject it, and the chain does not.
+    /// * Same process, no owner at all. Qt's own tool windows are like that.
+    ///
+    /// Geometry still decides, because ownership alone would let a program's unrelated windows come
+    /// along: a dropdown is never larger than the window it drops out of, never the same size as
+    /// another window of that program, and it sits mostly over it.
     fn host_of(popup: HWND, owner: HWND, hosts: &[(isize, u32)]) -> Option<isize> {
-        let owner = owner.0 as isize;
-        if let Some((host, _)) = hosts.iter().find(|(t, _)| *t == owner) {
+        if let Some((host, _)) = hosts.iter().find(|(t, _)| *t == owner.0 as isize) {
             return Some(*host);
         }
-        unsafe {
-            // One call rejects every window in every other process, which is most of them.
-            let mut pid = 0u32;
-            GetWindowThreadProcessId(popup, Some(&mut pid as *mut u32));
-            let a = visible_rect(popup)?;
-            // The pinned windows of the same program, best overlap wins. Several can be pinned at
-            // once — that is the point of the mode — and the first one in the list is not
-            // necessarily the one this popup came out of.
-            let mut best: Option<(i64, isize)> = None;
-            for (host, _) in hosts.iter().filter(|(_, p)| *p == pid) {
-                let Some(b) = visible_rect(hwnd_of(*host)) else { continue };
-                let Some(cover) = could_drop_from(a, b) else { continue };
-                if best.is_none_or(|(prev, _)| cover > prev) {
-                    best = Some((cover, *host));
-                }
-            }
-            best.map(|(_, host)| host)
+        let pid = pid_of(popup);
+        // The cheap rejection, before any geometry: a window that is neither in a pinned window's
+        // process nor hanging off one cannot be its dropdown, and this is nearly every window on
+        // the desktop. Only what survives it costs a DWM call.
+        let same_process = hosts.iter().any(|(_, p)| *p == pid);
+        let chained = if same_process {
+            None
+        } else {
+            chain_reaches(owner, hosts)
+        };
+        if !same_process && chained.is_none() {
+            return None;
         }
+        let popup_rect = visible_rect(popup)?;
+        let mut best: Option<(i64, isize)> = None;
+        for (host, host_pid) in hosts {
+            // Either the same program, or the program that this window hangs off.
+            if *host_pid != pid && chained != Some(*host) {
+                continue;
+            }
+            let Some(host_rect) = visible_rect(hwnd_of(*host)) else { continue };
+            let Some(cover) = could_drop_from(popup_rect, host_rect) else { continue };
+            if best.is_none_or(|(prev, _)| cover > prev) {
+                best = Some((cover, *host));
+            }
+        }
+        best.map(|(_, host)| host)
+    }
+
+    /// A window's class name, for the log: `WeChatAppEx.exe` and `Weixin.exe` windows are told
+    /// apart by class and not by title, and the next person to read this needs to know which
+    /// window was raised.
+    fn class_name(hwnd: HWND) -> String {
+        let mut buf = [0u16; 64];
+        let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+        if n <= 0 {
+            return "?".to_string();
+        }
+        String::from_utf16_lossy(&buf[..(n as usize).min(buf.len())])
+    }
+
+    /// Size and process, for the same log line.
+    fn described(hwnd: HWND) -> String {
+        let rc = visible_rect(hwnd);
+        let size = match rc {
+            Some(rc) => format!("{}x{}", rc.right - rc.left, rc.bottom - rc.top),
+            None => "no size".to_string(),
+        };
+        format!("{size}, pid {}", pid_of(hwnd))
     }
 
     /// How much of `popup` sits over `host`, if it could be a dropdown of it at all.
@@ -715,6 +862,41 @@ mod win {
             return None;
         }
         Some(cover)
+    }
+
+    /// Puts back any window this module raised that no longer has a reason to be on top.
+    ///
+    /// A dropdown is topmost only while it is showing and the window it belongs to is still
+    /// pinned. Nothing else clears the bit for us — WeChat hides its 900 x 900 save-bits window the
+    /// moment the panel closes, and a hidden topmost window is still *in* the topmost band, ready
+    /// to reappear over whatever is on screen next. That is the other half of "my window is not
+    /// really in front": something of the pinned app, or of the app that was pinned a minute ago,
+    /// floating above the desktop.
+    fn drop_stale_lifted(pinned: &[isize]) {
+        let Ok(mut lifted) = LIFTED.lock() else { return };
+        let mut kept: Vec<(isize, isize)> = Vec::with_capacity(lifted.len());
+        for (host, popup) in lifted.drain(..) {
+            let hwnd = hwnd_of(popup);
+            let alive = unsafe { IsWindow(hwnd).as_bool() };
+            let still_wanted =
+                alive && pinned.contains(&host) && unsafe { IsWindowVisible(hwnd).as_bool() };
+            if still_wanted {
+                kept.push((host, popup));
+            } else if alive {
+                unsafe {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        HWND_NOTOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    );
+                }
+            }
+        }
+        *lifted = kept;
     }
 
     /// Puts back what `lift_owned_popups` lifted for one window that is being released.
@@ -971,13 +1153,20 @@ mod win {
             Err(_) => return,
         };
         let candidate = CANDIDATE.load(SeqCst);
+        // Before anything else: a pinned window that some other program demoted is not pinned any
+        // more, and the frame around it would be telling a lie. Every fourth tick, not every tick:
+        // a program that clears the bit on every resize would otherwise be answered 30 times a
+        // second, and 130 ms is far below what anyone can see.
+        if TICKS.fetch_add(1, SeqCst) % 4 == 0 {
+            hold_on_top(&pinned);
+        }
         let mut want: Vec<(isize, bool)> = pinned.iter().map(|t| (*t, false)).collect();
         if ARMED.load(SeqCst) && candidate != 0 && !want.iter().any(|(t, _)| *t == candidate) {
             want.push((candidate, true));
         }
 
         frames.retain_mut(|f| {
-            let keep = want.iter().any(|(t, _)| *t == f.target) && still_wanted(f.target, f.preview);
+            let keep = want.iter().any(|(t, _)| *t == f.target) && still_wanted(f.target);
             if !keep {
                 f.destroy();
             }
