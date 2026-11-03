@@ -315,10 +315,18 @@ mod win {
         }
     }
 
-    /// The picker's own loop. Stays until it is told to stop; every pick it accepts resets the
-    /// idle clock rather than ending the mode, which is what lets the user pin one window after
-    /// another without going back to the tray.
+    /// The picker's own loop. One click is one window: the mode ends as soon as it has done its
+    /// job.
+    ///
+    /// It used to stay armed so that a second window was only one click away, and that was wrong.
+    /// A picker still listening behind the user's next click turns an ordinary click into a pin he
+    /// did not ask for, and nothing on screen says the mode is still on -- so the only way to get
+    /// out was to remember Escape. Pinning another window is another turn of the same gesture,
+    /// press the icon and click, which costs one click and leaves no hidden state behind.
     fn run_mode() {
+        // Declared outside the block below because the closing sound is chosen after it: this one
+        // has to outlive the hook.
+        let mut picked = false;
         unsafe {
             let Ok(hook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), HINSTANCE::default(), 0)
             else {
@@ -337,7 +345,7 @@ mod win {
             // A timer, not a keyboard hook: it wakes the loop often enough to notice Escape, and
             // it is the only thing here that could ever hang the mouse if it went wrong.
             let timer = SetTimer(HWND::default(), PICK_TIMER, 120, None);
-            let mut last = Instant::now();
+            let last = Instant::now();
             let mut msg = MSG::default();
             // The request is checked before the message is waited for: a stop that arrives before
             // this thread published its id has no message to catch, and `swap` makes sure the
@@ -349,9 +357,9 @@ mod win {
                     let target = PICKED.swap(0, SeqCst);
                     if target != 0 {
                         toggle(target);
-                        last = Instant::now();
+                        picked = true;
                     }
-                    continue;
+                    break;
                 }
                 if msg.message == WM_TIMER {
                     if GetAsyncKeyState(VK_ESCAPE.0 as i32) < 0 || last.elapsed() > IDLE_TIMEOUT {
@@ -373,8 +381,15 @@ mod win {
         CANDIDATE.store(0, SeqCst);
         // The one place the mode actually ends, whichever way it ended -- the tray icon again, the
         // right button, Escape or the idle timeout -- so the tick belongs here and nowhere else.
-        chime(OFF_SOUND);
-        crate::applog("pin: mode off");
+        //
+        // Except after a pick. That click already made its own sound, and a second one in the same
+        // breath would read as a rejection of the first.
+        if picked {
+            crate::applog("pin: mode off after a pick");
+        } else {
+            chime(OFF_SOUND);
+            crate::applog("pin: mode off");
+        }
         notify();
     }
 
@@ -516,8 +531,8 @@ mod win {
     /// `SWP_NOACTIVATE` on the way in, because the user just chose this window and expects it in
     /// front as well as on top.
     ///
-    /// Toggling is what makes "pin the next one" and "let this one go" the same gesture, so the
-    /// mode can stay armed across several windows instead of closing after the first.
+    /// Toggling is what makes "pin this one" and "let this one go" the same gesture, so a window
+    /// that is already on top is released by the very click that would have pinned it.
     fn toggle(target: isize) {
         let Ok(mut list) = PINNED.lock() else { return };
         if let Some(pos) = list.iter().position(|t| *t == target) {
