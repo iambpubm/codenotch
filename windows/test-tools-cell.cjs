@@ -21,11 +21,16 @@ test('the tools ring sits behind its own hairline, after the counts', () => {
   // The template emits providers, then the counts, then a separator, then the ring. Pinned in that
   // order because the order is the design: the line is what keeps the switch out of the counts.
   const counts = notch.indexOf('bs.map((b,i)=>`<div class="cell" data-p="b:${b.id}"');
-  const sep = notch.indexOf('+`<div class="sep"></div>');
+  // The tools group's own hairline is the last one in the template -- the counts have one too, so
+  // `lastIndexOf` is what tells the two apart now that the whole group sits behind a condition.
+  const sep = notch.lastIndexOf('<div class="sep"></div>');
   const tool = notch.indexOf('<div class="cell tool" data-p="tool:touch"');
   assert.ok(counts > 0, 'the counts are no longer rendered');
   assert.ok(sep > counts, 'the tools separator has to come after the counts');
   assert.ok(tool > sep, 'the tools ring has to come after its separator');
+  // Settings can take the cell away, and the hairline has to go with it: a separator left behind
+  // would draw a line under nothing, on every notch, whether or not the switch was ever wanted.
+  assert.match(notch, /\+\(touchSidebar\?`<div class="sep"><\/div>/, 'the tools group is no longer conditional');
   // The counts' own separator is still the one before them, so a pill with no counts still has a
   // hairline in front of the ring rather than two in a row.
   assert.ok(notch.includes("+(bs.length?`<div class=\"sep\"></div>`:'')"), 'the counts lost their hairline');

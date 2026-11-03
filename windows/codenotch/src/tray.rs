@@ -2,11 +2,15 @@ use crate::i18n::tr;
 use crate::traymenu;
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// The pin icon is a tray icon of its own, with its own id, because it is a mode rather than a
 /// command: it has to sit there showing whether clicks are being captured.
 const PIN_ID: &str = "pin";
+
+/// The touch screen icon. Also its own id: it is the one switch that changes the machine rather
+/// than Codenotch, and it has to be reachable without opening a menu.
+const TOUCH_ID: &str = "touch";
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_menu(app)?;
@@ -23,6 +27,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, ev| handle(app, ev.id().as_ref()))
         .build(app)?;
     setup_pin(app)?;
+    setup_touch(app)?;
     Ok(())
 }
 
@@ -62,6 +67,122 @@ fn setup_pin(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// The handle the touch icon's click borrows. Tauri hands a tray event the tray, not the app, and
+/// the switch needs the app to reach the config and the notch; one handle is enough for the whole
+/// process, so it is kept here rather than threaded through a closure.
+static TOUCH_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+/// The touch screen icon: left click switches the glass off or back on, right click offers the same
+/// switch plus a way into Settings.
+///
+/// Separate from the app's own icon because it is a switch, not a reading. The moment it is wanted
+/// is the moment a palm on the glass is dragging the pointer about, and that is not a moment to open
+/// a menu and read it first. The right-click menu names the switch ("Turn the touch screen off"), so
+/// the icon does not have to be memorised.
+fn setup_touch(app: &AppHandle) -> tauri::Result<()> {
+    let _ = TOUCH_APP.set(app.clone());
+    let mut builder = TrayIconBuilder::with_id(TOUCH_ID);
+    if let Some(icon) = crate::trayicon::touch_mark() {
+        builder = builder.icon(icon);
+    }
+    builder
+        .tooltip(touch_tooltip(app))
+        .menu(&touch_menu(app)?)
+        // A left click switches the glass; it must not open a menu first.
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "touch_toggle" => switch_touch(app),
+            "settings" => crate::settings_window::open(app),
+            _ => {}
+        })
+        .on_tray_icon_event(|_tray, event| {
+            // Up, not Down: Windows reports both, and switching on each would turn the glass off
+            // and straight back on in the same press.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                if let Some(app) = TOUCH_APP.get() {
+                    switch_touch(app);
+                }
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// Flips the glass on a thread of its own.
+///
+/// `touch::set_enabled` hands the write to an elevated process and then waits up to five seconds for
+/// the device tree to agree -- and on the very first switch that wait includes a consent dialog. A
+/// tray callback that blocks for that long freezes the taskbar, so the click only starts the thread.
+fn switch_touch(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        crate::applog("touch: switching from the tray");
+        let before = crate::touch::read();
+        if before.found == 0 {
+            // Nothing to switch. Refreshing anyway keeps the tooltip from claiming otherwise.
+            refresh_touch_tray(&handle);
+            return;
+        }
+        match crate::touch::set_enabled(before.disabled) {
+            Ok(state) => {
+                crate::applog(&format!(
+                    "touch: switched from the tray (found {}, disabled {})",
+                    state.found, state.disabled
+                ));
+                // The notch draws the same switch. It polls every two seconds, but the page should
+                // not be left showing the old state right after the click that changed it.
+                let _ = handle.emit("touch_state", crate::touch::read());
+            }
+            Err(why) => crate::applog(&format!("touch: the tray switch failed ({why})")),
+        }
+        refresh_touch_tray(&handle);
+    });
+}
+
+/// The menu behind a right click on the touch icon: the switch, by name, and the way into Settings.
+fn touch_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let lang = language(app);
+    let state = crate::touch::read();
+    let label = if state.disabled { "touch_do_on" } else { "touch_do_off" };
+    let switch = MenuItemBuilder::with_id("touch_toggle", tr(&lang, label))
+        .enabled(state.found > 0)
+        .build(app)?;
+    let settings = MenuItemBuilder::with_id("settings", tr(&lang, "settings")).build(app)?;
+    MenuBuilder::new(app)
+        .item(&switch)
+        .separator()
+        .item(&settings)
+        .build()
+}
+
+/// What the pointer finds on the touch icon: whether the glass takes taps, and what a click does.
+fn touch_tooltip(app: &AppHandle) -> String {
+    let lang = language(app);
+    let state = crate::touch::read();
+    if state.found == 0 {
+        return tr(&lang, "touch_tip_absent").to_string();
+    }
+    tr(&lang, if state.disabled { "touch_tip_off" } else { "touch_tip_on" }).to_string()
+}
+
+/// Puts the tooltip and the menu back in step with the device tree. Called from the switching
+/// thread, so the hop to the main thread happens here, where a menu is safe to build.
+pub fn refresh_touch_tray(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(tray) = handle.tray_by_id(TOUCH_ID) else { return };
+        if let Ok(menu) = touch_menu(&handle) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        let _ = tray.set_tooltip(Some(&touch_tooltip(&handle)));
+    });
 }
 
 /// The menu behind a right click on the pin icon. Rebuilt whenever the mode or the count changes,

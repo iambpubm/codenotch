@@ -2306,6 +2306,11 @@ struct UiFlags {
     tray_visible: bool,
     /// 独立的「窗口置顶」托盘图标是否显示。它与主图标是两个开关：主图标管读数，这个只管置顶。
     pin_tray: bool,
+    /// 独立的「触摸屏」托盘图标是否显示。同样是两件事：主图标管读数，这个只管触摸屏开关。
+    touch_tray: bool,
+    /// 侧边栏（notch 条）上是否保留触摸屏那一格。关掉之后条子只放读数，
+    /// 托盘图标与设置页仍然能切换触摸屏。
+    touch_sidebar: bool,
     /// 待办临近截止时，卡片自己撑开催你。页面要它来决定「要不要在不悬停的时候也展开」。
     todo_auto_open: bool,
 }
@@ -2316,6 +2321,8 @@ fn ui_flags(c: &config::Config) -> UiFlags {
         notch_on_hover: c.notch_on_hover,
         tray_visible: c.tray_visible,
         pin_tray: c.pin_tray,
+        touch_tray: c.touch_tray,
+        touch_sidebar: c.touch_sidebar,
         todo_auto_open: c.todo_auto_open,
     }
 }
@@ -2366,6 +2373,40 @@ fn set_pin_tray(app: AppHandle, enabled: bool) -> bool {
     enabled
 }
 
+/// The touch icon's own switch. Like the pin icon it is not tied to the notch -- the switch is
+/// still on the sidebar and in Settings -- so nothing has to be protected by forcing it back on.
+#[tauri::command]
+fn set_touch_tray(app: AppHandle, enabled: bool) -> bool {
+    {
+        let st = app.state::<AppState>();
+        let mut c = st.cfg.lock().unwrap();
+        c.touch_tray = enabled;
+        config::save(&c);
+    }
+    apply_visibility(&app);
+    // An icon that just came back has to say what the glass is doing now, not what it was when the
+    // icon was hidden.
+    crate::tray::refresh_touch_tray(&app);
+    enabled
+}
+
+/// Whether the notch keeps the touch cell.
+///
+/// The notch draws its own cells, so this is a flag the page reads rather than something Rust can
+/// take away. Hiding it costs nothing: the tray icon and Settings still switch the glass.
+#[tauri::command]
+fn set_touch_sidebar(app: AppHandle, enabled: bool) -> bool {
+    {
+        let st = app.state::<AppState>();
+        let mut c = st.cfg.lock().unwrap();
+        c.touch_sidebar = enabled;
+        config::save(&c);
+    }
+    // Puts the new flag on `ui_flags`, which is the message the notch redraws from.
+    apply_visibility(&app);
+    enabled
+}
+
 /// The notch menu's Keep open: the Mac's own shortcut between Always show and Show on hover
 /// (`onToggleKeepOpen` flips `notchVisibility`), so it is the same setting from another place.
 pub fn toggle_keep_open(app: &AppHandle) {
@@ -2386,10 +2427,16 @@ pub fn keeps_open(app: &AppHandle) -> bool {
 
 /// Puts the two switches into effect.
 pub fn apply_visibility(app: &AppHandle) {
-    let (notch, tray_on, pin_on, flags) = {
+    let (notch, tray_on, pin_on, touch_on, flags) = {
         let st = app.state::<AppState>();
         let c = st.cfg.lock().unwrap();
-        (c.notch_visible, c.tray_visible, c.pin_tray, ui_flags(&c))
+        (
+            c.notch_visible,
+            c.tray_visible,
+            c.pin_tray,
+            c.touch_tray,
+            ui_flags(&c),
+        )
     };
     // The page folds or stays open by these, and the Settings window redraws its Show row from them
     // when Keep open changed them from the notch's own menu
@@ -2407,6 +2454,9 @@ pub fn apply_visibility(app: &AppHandle) {
     }
     if let Some(t) = app.tray_by_id("pin") {
         let _ = t.set_visible(pin_on);
+    }
+    if let Some(t) = app.tray_by_id("touch") {
+        let _ = t.set_visible(touch_on);
     }
 }
 
@@ -2527,10 +2577,15 @@ async fn get_touch_state() -> touch::TouchState {
 /// that half to a process that has them — a task registered the first time, silent from then on —
 /// and always answers with the state read back from the device tree.
 #[tauri::command]
-async fn set_touch_enabled(on: bool) -> Result<touch::TouchState, String> {
+async fn set_touch_enabled(app: AppHandle, on: bool) -> Result<touch::TouchState, String> {
     let state = tauri::async_runtime::spawn_blocking(move || touch::set_enabled(on))
         .await
         .map_err(|e| format!("the switch did not finish: {e}"))?;
+    // The tray icon shows the same switch, so it has to say what the glass is doing now: the click
+    // may have come from this window rather than from the icon.
+    if state.is_ok() {
+        crate::tray::refresh_touch_tray(&app);
+    }
     // The refusal is a code the page turns into its own sentence ("declined", "not-found",
     // "unchanged", "failed"); the detail behind a failure is in run.log.
     state.map_err(String::from)
@@ -2540,13 +2595,16 @@ async fn set_touch_enabled(on: bool) -> Result<touch::TouchState, String> {
 /// asks for the opposite of what they say, so a state that changed behind our back still ends up
 /// where the click meant it to.
 #[tauri::command]
-async fn toggle_touch() -> Result<touch::TouchState, String> {
+async fn toggle_touch(app: AppHandle) -> Result<touch::TouchState, String> {
     let state = tauri::async_runtime::spawn_blocking(|| {
         let now = touch::read();
         touch::set_enabled(now.disabled)
     })
     .await
     .map_err(|e| format!("the switch did not finish: {e}"))?;
+    if state.is_ok() {
+        crate::tray::refresh_touch_tray(&app);
+    }
     state.map_err(String::from)
 }
 
@@ -2871,6 +2929,8 @@ fn main() {
             get_ui_flags,
             set_ui_flags,
             set_pin_tray,
+            set_touch_tray,
+            set_touch_sidebar,
             get_lang,
             get_lang_resolved,
             get_autostart,

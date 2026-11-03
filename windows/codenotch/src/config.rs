@@ -112,6 +112,14 @@ pub struct Config {
     /// `tray_visible` it is never forced back on.
     #[serde(default = "yes")]
     pub pin_tray: bool,
+    /// true = the touch screen switch gets a tray icon of its own, so the glass can be turned off
+    /// without opening anything. Off, the switch is still on the notch and in Settings.
+    #[serde(default = "yes")]
+    pub touch_tray: bool,
+    /// true = the touch switch keeps its cell on the notch, beside the readings. Off, the notch
+    /// carries readings only; the tray icon and Settings still switch the glass.
+    #[serde(default = "yes")]
+    pub touch_sidebar: bool,
     /// false = no arc above the notch to carry it by. Nothing is lost: Appearance → Edge moves it too.
     #[serde(default = "yes")]
     pub show_move_handle: bool,
@@ -299,6 +307,8 @@ impl Default for Config {
             notch_on_hover: true,
             tray_visible: true,
             pin_tray: true,
+            touch_tray: true,
+            touch_sidebar: true,
             show_move_handle: true,
             adaptive_pill: false,
             brain_uid: String::new(),

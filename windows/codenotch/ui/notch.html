@@ -1389,6 +1389,9 @@ let brain={status:'none',due:{count:0,items:[],cut:false},over:{count:0,items:[]
 // 页面只负责把秒数拼成人话，以及把这一格画出来。
 let todos={open:0,overdue:0,soon:0,expansion:0,rows:[],remoteRows:[],sort:'deadline'};
 let todoAutoOpen=true;      // 设置里那个「临近截止自己撑开」，默认开
+// 侧边栏上是否保留触摸屏那一格。设置里可以把它拿掉，条子就只剩读数；
+// 触摸屏本身还能从托盘图标和设置页切换，所以关掉它不损失任何功能。
+let touchSidebar=true;
 let todoCheckedAt=0;
 function slotFor(id){
   if(!Array.isArray(notchSlots)) return null;
@@ -1527,7 +1530,10 @@ function renderRing(){
   // The business cells carry `data-p` as well, prefixed `b:`: the hover hit-test and the card's
   // tail both find their target through that attribute, so neither has to learn about them.
   const want=ps.map(p=>p.id+':'+(glyphs[p.base]?glyphs[p.base].kind:'-')).join(',')
-    +'|'+bs.map(b=>b.id).join(',');
+    +'|'+bs.map(b=>b.id).join(',')
+    // The tools cell can be taken away from Settings, and that is a structural change like any
+    // other ring appearing: the string is the reason the DOM is rebuilt at all.
+    +'|'+(touchSidebar?'t':'-');
   if(pill.dataset.cells!==want){
     pill.innerHTML=ps.map((p,i)=>`<div class="cell" data-p="${p.id}" style="--i:${i}">
       <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg><svg class="reading" viewBox="0 0 56 56"></svg><svg class="activity" viewBox="0 0 56 56"></svg><div class="glyph ${(!glyphs[p.base]&&p.glyph.length>1)?'small':''}">${glyphHtml(p)}</div></div>
@@ -1537,8 +1543,9 @@ function renderRing(){
         <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg><div class="bnum"></div></div>
         <div class="pct"></div></div>`).join('')
       // The tools group, behind its own hairline: a button, not a reading. Its mark is a screen with
-      // a finger on it, struck through while the glass takes no taps.
-      +`<div class="sep"></div>
+      // a finger on it, struck through while the glass takes no taps. Settings can take the whole
+      // cell away, and the switch it draws is then reachable from the tray and from Settings only.
+      +(touchSidebar?`<div class="sep"></div>
         <div class="cell tool" data-p="tool:touch" style="--i:${ps.length+bs.length}">
         <div class="ringwrap"><svg class="ring" viewBox="0 0 56 56"></svg>
           <div class="glyph"><svg class="tool-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -1546,7 +1553,7 @@ function renderRing(){
             <circle cx="12" cy="8.4" r="1.9" fill="currentColor" stroke="none"/>
             <line class="tool-slash" x1="4.4" y1="19.6" x2="19.6" y2="4.4" stroke-width="2"/>
           </svg></div></div>
-        <div class="pct"></div></div>`;
+        <div class="pct"></div></div>`:'');
     pill.dataset.cells=want;
   }
   for(const p of ps){
@@ -1642,6 +1649,9 @@ function renderTool(){
 // unfolds on every approach. Two seconds apart is enough to catch a switch thrown from Settings
 // without doing that work twice for one hover.
 function refreshTouch(force){
+  // No cell, nothing to fill: reading the device tree walks every HID collection, and the cell can
+  // be switched off entirely in Settings.
+  if(!touchSidebar) return;
   const now=Date.now();
   if(!force&&now-touchAt<2000) return;
   touchAt=now;
@@ -2350,6 +2360,15 @@ function scheduleFold(){
 function applyUiFlags(f){
   onHover=!!(f&&f.notch_on_hover);
   todoAutoOpen=!!(f&&f.todo_auto_open);
+  const side=!(f&&f.touch_sidebar===false);
+  if(side!==touchSidebar){
+    const was=touchSidebar;
+    touchSidebar=side;
+    renderRing();
+    // Coming back, the cell has no reading yet: the poll is skipped while it is away, so ask now
+    // rather than leave an empty ring until the next time the notch unfolds.
+    if(!was) refreshTouch(true);
+  }
   scheduleFold();
   applyAutoCard();
 }
@@ -2367,6 +2386,9 @@ listen('pill_backdrop',e=>{
   else delete document.body.dataset.behind;
 }).catch(()=>{});
 invoke('get_ui_flags').then(applyUiFlags).catch(()=>{});
+// The switch can also be thrown from the tray icon, which is where it gets used when a palm is on
+// the glass. That path pushes the new state; the two-second poll stays as the fallback.
+listen('touch_state',e=>{ if(e&&e.payload&&typeof e.payload==='object'){ touchState=e.payload; renderTool(); } }).catch(()=>{});
 listen('move_handle',e=>{ showMove=e.payload!==false; reportHot(); }).catch(()=>{});
 invoke('get_move_handle').then(v=>{ showMove=v!==false; reportHot(); }).catch(()=>{});
 // The tools ring draws itself from the device tree, so its first reading is taken here and again

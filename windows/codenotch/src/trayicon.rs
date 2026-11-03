@@ -26,6 +26,16 @@ pub fn pin_mark() -> Option<tauri::image::Image<'static>> {
     tauri::image::Image::from_bytes(include_bytes!("../icons/tray-pin.png")).ok()
 }
 
+/// The touch screen icon: the same deep-cyan tile, with a screen cut by a slash.
+///
+/// Three icons now sit together by the clock, so the family matters more than any one of them: one
+/// silhouette, one flat colour, and a mark that is still a mark at 16 px. The slab is filled rather
+/// than outlined for exactly that reason — an outlined screen with a finger on it turns into a
+/// smudge at half size, while a filled one cut in two still reads.
+pub fn touch_mark() -> Option<tauri::image::Image<'static>> {
+    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-touch.png")).ok()
+}
+
 /// The same icon as a `data:` URL, so the settings window shows what the taskbar shows.
 pub fn app_mark_data_url() -> Option<String> {
     png_data_url(include_bytes!("../icons/tray-color.png"))

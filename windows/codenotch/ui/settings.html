@@ -216,6 +216,8 @@
           <div class="item cap" id="flags-fix" data-dynamic hidden></div>
           <div class="item"><span>Always on top icon</span><span class="seg" id="seg-pin"><button data-v="on">System tray</button><button data-v="off">Off</button></span></div>
           <div class="item cap" id="cap-pin" data-dynamic></div>
+          <div class="item"><span>Touch screen icon</span><span class="seg" id="seg-touch-tray"><button data-v="on">System tray</button><button data-v="off">Off</button></span></div>
+          <div class="item cap" id="cap-touch-tray" data-dynamic></div>
           <div class="item"><span>Language</span>
             <select id="lang" aria-label="Language">
               <option value="auto">Follow system</option>
@@ -272,6 +274,8 @@
         <div class="group">
           <div class="item"><span>Touch screen</span><button class="switch" id="sw-touch" role="switch" aria-checked="false" aria-label="Touch screen"></button></div>
           <div class="item cap" id="cap-touch" data-dynamic></div>
+          <div class="item"><span>Show on the sidebar</span><span class="seg" id="seg-touch-side"><button data-v="on">On</button><button data-v="off">Off</button></span></div>
+          <div class="item cap" id="cap-touch-side" data-dynamic></div>
         </div>
         <div class="group">
           <div class="item"><span>Open Codenotch at login</span><button class="switch" id="sw-autostart" role="switch" aria-checked="false" aria-label="Open Codenotch at login"></button></div>
@@ -324,6 +328,12 @@ function esc(s){
    Windows page keep the Russian #141 gave them. `applyStaticUi()` matches a text node exactly, so
    rewording any string here means changing its key in every table. */
 const PT_BR_STATIC = {
+  'Touch screen icon': 'Ícone da tela de toque',
+  'Show on the sidebar': 'Mostrar na barra lateral',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': 'Um terceiro ícone ao lado do relógio. Clique para desligar ou ligar a tela de toque sem abrir nada — ele é querido no momento em que uma palma está arrastando o ponteiro.',
+  'No third icon. The touch switch stays on the sidebar and in this window.': 'Sem terceiro ícone. O interruptor da tela de toque continua na barra lateral e nesta janela.',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': 'O interruptor da tela de toque mantém sua célula na barra lateral, sob as leituras. Desligue e a barra lateral mostra apenas leituras — o ícone da bandeja e esta janela ainda alternam o vidro.',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': 'Recolhido: a barra lateral mostra apenas leituras, e o interruptor da tela de toque fica no ícone da bandeja e nesta janela.',
   "To-do":"A fazer",
   "The list":"Lista",
   "Sort":"Ordem",
@@ -525,6 +535,12 @@ const PT_BR_STATIC = {
   'Saved':'Salvo'
 };
 const RU_STATIC = {
+  'Touch screen icon': 'Значок сенсорного экрана',
+  'Show on the sidebar': 'Показывать на боковой панели',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': 'Третий значок рядом с часами. Щёлкните, чтобы выключить или включить сенсорный экран, ничего не открывая: он нужен в тот момент, когда ладонь тащит указатель.',
+  'No third icon. The touch switch stays on the sidebar and in this window.': 'Без третьего значка. Переключатель сенсорного экрана остаётся на боковой панели и в этом окне.',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': 'Переключатель сенсорного экрана остаётся на боковой панели, под показаниями. Выключите — и панель будет показывать только показания; значок в трее и это окно по-прежнему переключают стекло.',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': 'Свёрнуто: боковая панель показывает только показания, а переключатель сенсорного экрана живёт в значке трея и в этом окне.',
   "To-do":"Дела",
   "The list":"Список",
   "Sort":"Сортировка",
@@ -693,6 +709,12 @@ const RU_STATIC = {
   'App designed and developed by':'Приложение разработал', 'Saved':'Сохранено'
 };
 const ZH_STATIC = {
+  'Touch screen icon': '触摸屏图标',
+  'Show on the sidebar': '在侧边栏显示',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': '时钟旁的第三个图标。点一下就能关掉或打开触摸屏，不用先打开任何东西——需要它的时刻，正是一块手掌在拖指针的时候。',
+  'No third icon. The touch switch stays on the sidebar and in this window.': '没有第三个图标。触摸屏开关仍留在侧边栏和这个窗口里。',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': '触摸屏开关会留在侧边栏上，排在读数下面。关掉之后侧边栏只放读数；托盘图标和这个窗口仍然能切换触摸屏。',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': '已收起：侧边栏只放读数，触摸屏开关在托盘图标和这个窗口里。',
   "To-do":"待办",
   "The list":"清单",
   "Sort":"排序",
@@ -892,6 +914,12 @@ const ZH_STATIC = {
   'this screen cannot be remembered by name':'这块屏幕无法按名称记住'
 };
 const ZH_HANT_STATIC = {
+  'Touch screen icon': '觸控螢幕圖示',
+  'Show on the sidebar': '在側邊欄顯示',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': '時鐘旁的第三個圖示。點一下就能關掉或打開觸控螢幕，不用先開啟任何東西——需要它的時刻，正是一塊手掌在拖指標的時候。',
+  'No third icon. The touch switch stays on the sidebar and in this window.': '沒有第三個圖示。觸控螢幕開關仍留在側邊欄和這個視窗裡。',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': '觸控螢幕開關會留在側邊欄上，排在讀數下面。關掉之後側邊欄只放讀數；匣盤圖示和這個視窗仍然能切換觸控螢幕。',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': '已收起：側邊欄只放讀數，觸控螢幕開關在匣盤圖示和這個視窗裡。',
   "To-do":"待辦",
   "The list":"清單",
   "Sort":"排序",
@@ -1091,6 +1119,12 @@ const ZH_HANT_STATIC = {
   'this screen cannot be remembered by name':'這塊螢幕無法按名稱記住'
 };
 const JA_STATIC = {
+  'Touch screen icon': 'タッチスクリーンのアイコン',
+  'Show on the sidebar': 'サイドバーに表示',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': '時計の隣の 3 つ目のアイコンです。クリックするだけでタッチスクリーンをオフ／オンできます。手のひらがポインターを動かしているときこそ必要なものです。',
+  'No third icon. The touch switch stays on the sidebar and in this window.': '3 つ目のアイコンはありません。タッチスクリーンのスイッチはサイドバーとこのウィンドウに残ります。',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': 'タッチスクリーンのスイッチはサイドバーの読み取り値の下に残ります。オフにするとサイドバーは読み取り値だけになり、トレイのアイコンとこのウィンドウからは切り替えられます。',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': 'たたまれています。サイドバーは読み取り値だけで、タッチスクリーンのスイッチはトレイのアイコンとこのウィンドウにあります。',
   "To-do":"やること",
   "The list":"リスト",
   "Sort":"並び順",
@@ -1277,6 +1311,12 @@ const JA_STATIC = {
   'Model data':'モデルのデータ'
 };
 const KO_STATIC = {
+  'Touch screen icon': '터치스크린 아이콘',
+  'Show on the sidebar': '사이드바에 표시',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': '시계 옆의 세 번째 아이콘입니다. 클릭 한 번으로 아무것도 열지 않고 터치스크린을 끄거나 켤 수 있습니다. 손바닥이 포인터를 끌고 있을 때 바로 필요한 기능입니다.',
+  'No third icon. The touch switch stays on the sidebar and in this window.': '세 번째 아이콘 없음. 터치스크린 스위치는 사이드바와 이 창에 남습니다.',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': '터치스크린 스위치는 사이드바의 읽기 값 아래에 남습니다. 끄면 사이드바는 읽기 값만 보여 주고, 트레이 아이콘과 이 창에서는 계속 전환할 수 있습니다.',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': '접힘: 사이드바는 읽기 값만 보여 주며, 터치스크린 스위치는 트레이 아이콘과 이 창에 있습니다.',
   "To-do":"할 일",
   "The list":"목록",
   "Sort":"정렬",
@@ -1478,6 +1518,12 @@ const KO_STATIC = {
   'Русский':'Русский'
 };
 const UK_STATIC = {
+  'Touch screen icon': 'Значок сенсорного екрана',
+  'Show on the sidebar': 'Показувати на бічній панелі',
+  'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.': 'Третій значок поруч із годинником. Клацніть, щоб вимкнути або ввімкнути сенсорний екран, нічого не відкриваючи: він потрібен саме тоді, коли долоня тягне вказівник.',
+  'No third icon. The touch switch stays on the sidebar and in this window.': 'Без третього значка. Перемикач сенсорного екрана лишається на бічній панелі та в цьому вікні.',
+  'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.': 'Перемикач сенсорного екрана лишається на бічній панелі, під показаннями. Вимкніть — і панель показуватиме лише показання; значок у лотку та це вікно й далі перемикають скло.',
+  'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.': 'Згорнуто: бічна панель показує лише показання, а перемикач сенсорного екрана живе у значку лотка та в цьому вікні.',
   "To-do":"Справи",
   "The list":"Список",
   "Sort":"Сортування",
@@ -2303,14 +2349,21 @@ const HELD_ON = 'Held on: the notch is hidden, so this icon is the only way left
 const KEPT_ON = 'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.';
 const PIN_ON_WHY = 'A second icon beside the clock. Click it, then click any window to keep it on top; click the same window again to let it go.';
 const PIN_OFF_WHY = "No second icon. Pinning stays under Codenotch's own menu.";
-let flags = { notch:true, hover:false, tray:true, pin:true }, flagsBusy = false, flagsCorrected = false, pinBusy = false;
+const TOUCH_TRAY_ON_WHY = 'A third icon beside the clock. Click it to switch the touch screen off or on without opening anything — the moment it is wanted is the moment a palm is dragging the pointer about.';
+const TOUCH_TRAY_OFF_WHY = 'No third icon. The touch switch stays on the sidebar and in this window.';
+const TOUCH_SIDE_ON_WHY = 'The touch switch keeps its cell on the sidebar, under the readings. Turn it off and the sidebar carries readings only — the tray icon and this window still switch the glass.';
+const TOUCH_SIDE_OFF_WHY = 'Folded away: the sidebar carries readings only, and the touch switch lives in the tray icon and in this window.';
+let flags = { notch:true, hover:false, tray:true, pin:true, touchTray:true, touchSide:true }, flagsBusy = false, flagsCorrected = false, pinBusy = false, touchTrayBusy = false, touchSideBusy = false;
 
 function readFlags(v){
   const nv = v && (v.notch_visible !== undefined ? v.notch_visible : v.notchVisible);
   const hv = v && (v.notch_on_hover !== undefined ? v.notch_on_hover : v.notchOnHover);
   const tv = v && (v.tray_visible !== undefined ? v.tray_visible : v.trayVisible);
   const pv = v && (v.pin_tray !== undefined ? v.pin_tray : v.pinTray);
-  return { notch: nv !== false, hover: hv === true, tray: tv !== false, pin: pv !== false };
+  const ktv = v && (v.touch_tray !== undefined ? v.touch_tray : v.touchTray);
+  const ksv = v && (v.touch_sidebar !== undefined ? v.touch_sidebar : v.touchSidebar);
+  return { notch: nv !== false, hover: hv === true, tray: tv !== false, pin: pv !== false,
+           touchTray: ktv !== false, touchSide: ksv !== false };
 }
 function showMode(){ return !flags.notch ? 'hide' : flags.hover ? 'hover' : 'show'; }
 function drawSeg(id, value, disabled, busy){
@@ -2335,6 +2388,12 @@ function renderFlags(){
   drawSeg('seg-pin', flags.pin ? 'on' : 'off', [], pinBusy);
   const pinWhy = flags.pin ? PIN_ON_WHY : PIN_OFF_WHY;
   document.getElementById('cap-pin').textContent = ui(pinWhy, pinWhy);
+  drawSeg('seg-touch-tray', flags.touchTray ? 'on' : 'off', [], touchTrayBusy);
+  const touchTrayWhy = flags.touchTray ? TOUCH_TRAY_ON_WHY : TOUCH_TRAY_OFF_WHY;
+  document.getElementById('cap-touch-tray').textContent = ui(touchTrayWhy, touchTrayWhy);
+  drawSeg('seg-touch-side', flags.touchSide ? 'on' : 'off', [], touchSideBusy);
+  const touchSideWhy = flags.touchSide ? TOUCH_SIDE_ON_WHY : TOUCH_SIDE_OFF_WHY;
+  document.getElementById('cap-touch-side').textContent = ui(touchSideWhy, touchSideWhy);
 }
 function saveFlags(wantNotch, wantTray, wantHover){
   if(flagsBusy) return;
@@ -2392,6 +2451,56 @@ document.getElementById('seg-pin').addEventListener('click', e => {
   if(!b || b.disabled) return;
   const want = b.dataset.v === 'on';
   if(want !== flags.pin) savePin(want);
+});
+/* The touch icon has a switch of its own, the same shape as the pin icon's: it is not tied to the
+   notch either, so nothing has to be forced back on. */
+function saveTouchTray(want){
+  if(touchTrayBusy || flags.touchTray === want) return;
+  touchTrayBusy = true;
+  flags.touchTray = want;
+  renderFlags();
+  invoke('set_touch_tray', { enabled: want })
+    .then(v => {
+      flags.touchTray = v !== false;
+      toast();
+    })
+    .catch(e => strip('set_touch_tray failed: ' + errText(e)))
+    .then(() => {
+      touchTrayBusy = false;
+      return call('get_ui_flags', undefined, null);
+    })
+    .then(v => { if(v && typeof v === 'object') flags = readFlags(v); renderFlags(); });
+}
+document.getElementById('seg-touch-tray').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if(!b || b.disabled) return;
+  const want = b.dataset.v === 'on';
+  if(want !== flags.touchTray) saveTouchTray(want);
+});
+/* Whether the sidebar keeps the touch cell. Hiding it costs nothing: the switch is still in the
+   tray and right here. */
+function saveTouchSide(want){
+  if(touchSideBusy || flags.touchSide === want) return;
+  touchSideBusy = true;
+  flags.touchSide = want;
+  renderFlags();
+  invoke('set_touch_sidebar', { enabled: want })
+    .then(v => {
+      flags.touchSide = v !== false;
+      toast();
+    })
+    .catch(e => strip('set_touch_sidebar failed: ' + errText(e)))
+    .then(() => {
+      touchSideBusy = false;
+      return call('get_ui_flags', undefined, null);
+    })
+    .then(v => { if(v && typeof v === 'object') flags = readFlags(v); renderFlags(); });
+}
+document.getElementById('seg-touch-side').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if(!b || b.disabled) return;
+  const want = b.dataset.v === 'on';
+  if(want !== flags.touchSide) saveTouchSide(want);
 });
 // Keep open in the notch's own menu changes the same setting while this window may be open
 try { window.__TAURI__.event.listen('ui_flags', e => { if(!flagsBusy && e.payload){ flags = readFlags(e.payload); renderFlags(); } }); } catch(e) { /* read again next time it opens */ }
