@@ -878,10 +878,19 @@ mod win {
 
         /// The halo has to be there, or the frame reads as a hairline that a bright wallpaper
         /// eats — and it has to stop, or the frame bleeds into the window beside it.
+        ///
+        /// Held to "strongest right outside the line, weaker further out, gone at the limit"
+        /// rather than to a figure at a fixed distance: an earlier version asserted
+        /// `ring_alpha(STROKE + 1.5) > 0.2`, which was only true while `GLOW` was 4.5 and broke
+        /// the build the moment the halo was shortened to 3.0 — a test that pinned the parameter
+        /// it was supposed to be checking the shape of.
         #[test]
         fn the_halo_reaches_past_the_line_and_stops() {
-            assert!(ring_alpha(STROKE + 1.5) > 0.2, "just outside the line");
-            assert!(ring_alpha(STROKE + GLOW * 0.5) > 0.0);
+            let near = ring_alpha(STROKE + 0.5);
+            let far = ring_alpha(STROKE + GLOW * 0.5);
+            assert!(near > 0.3, "the halo is strongest just outside the line: {near}");
+            assert!(far > 0.0, "and still there halfway out: {far}");
+            assert!(far < near, "and weaker than the near part: {far} < {near}");
             assert_eq!(ring_alpha(STROKE + GLOW), 0.0, "the halo ends where it says");
             assert_eq!(ring_alpha(STROKE + GLOW + 1.0), 0.0);
         }
