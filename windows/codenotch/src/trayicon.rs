@@ -32,8 +32,17 @@ pub fn pin_mark() -> Option<tauri::image::Image<'static>> {
 /// silhouette, one flat colour, and a mark that is still a mark at 16 px. The slab is filled rather
 /// than outlined for exactly that reason — an outlined screen with a finger on it turns into a
 /// smudge at half size, while a filled one cut in two still reads.
-pub fn touch_mark() -> Option<tauri::image::Image<'static>> {
-    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-touch.png")).ok()
+///
+/// Unlike the pin mark, this one has two faces: the live tile and the same silhouette greyed out.
+/// The tray icon is the one place the state of the glass has to read at a glance — a palm on the
+/// screen is no moment to read a tooltip — so the colour carries it. `disabled` picks which face.
+pub fn touch_mark(disabled: bool) -> Option<tauri::image::Image<'static>> {
+    let bytes: &'static [u8] = if disabled {
+        include_bytes!("../icons/tray-touch-off.png")
+    } else {
+        include_bytes!("../icons/tray-touch.png")
+    };
+    tauri::image::Image::from_bytes(bytes).ok()
 }
 
 /// The same icon as a `data:` URL, so the settings window shows what the taskbar shows.

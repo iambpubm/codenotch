@@ -84,7 +84,7 @@ static TOUCH_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 fn setup_touch(app: &AppHandle) -> tauri::Result<()> {
     let _ = TOUCH_APP.set(app.clone());
     let mut builder = TrayIconBuilder::with_id(TOUCH_ID);
-    if let Some(icon) = crate::trayicon::touch_mark() {
+    if let Some(icon) = crate::trayicon::touch_mark(crate::touch::read().disabled) {
         builder = builder.icon(icon);
     }
     builder
@@ -172,12 +172,18 @@ fn touch_tooltip(app: &AppHandle) -> String {
     tr(&lang, if state.disabled { "touch_tip_off" } else { "touch_tip_on" }).to_string()
 }
 
-/// Puts the tooltip and the menu back in step with the device tree. Called from the switching
-/// thread, so the hop to the main thread happens here, where a menu is safe to build.
+/// Puts the icon, the tooltip and the menu back in step with the device tree. Called from the
+/// switching thread, so the hop to the main thread happens here, where a menu is safe to build.
 pub fn refresh_touch_tray(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(tray) = handle.tray_by_id(TOUCH_ID) else { return };
+        let state = crate::touch::read();
+        // The icon is the state: the greyed tile is the whole point of the tray entry, so it swaps
+        // with the reading, not just the tooltip.
+        if let Some(icon) = crate::trayicon::touch_mark(state.disabled) {
+            let _ = tray.set_icon(Some(icon));
+        }
         if let Ok(menu) = touch_menu(&handle) {
             let _ = tray.set_menu(Some(menu));
         }
