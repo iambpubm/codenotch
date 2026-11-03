@@ -89,7 +89,10 @@ fn handle(app: &AppHandle, id: &str) {
     match item {
         "refresh" => crate::refresh_all(app),
         "keep_open" => crate::toggle_keep_open(app),
-        "quit" => app.exit(0),
+        "quit" => {
+            crate::pintop::shutdown();
+            app.exit(0);
+        }
         _ => {}
     }
 }

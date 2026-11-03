@@ -7,6 +7,7 @@ mod config;
 mod doctor;
 mod i18n;
 mod notchmenu;
+mod pintop;
 mod tray;
 mod traymenu;
 mod usage;
@@ -2900,6 +2901,9 @@ fn main() {
             backdrop::start(handle.clone());
             start_work_area_watch(handle.clone());
             topmost::start_watchdog(handle.clone());
+            // Frames for any window the user pins. Started here so the thread is up before the
+            // tray can offer the item that fills its list.
+            pintop::start();
             // Persist the config
             {
                 let st = handle.state::<AppState>();

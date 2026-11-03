@@ -210,6 +210,16 @@ pub fn tr(lang: &str, key: &str) -> &'static str {
         ("ru", "keep_open") => "Оставить открытым",
         ("uk", "keep_open") => "Тримати відкритим",
         (_, "keep_open") => "Keep open",
+        // The ellipsis is the only hint that this item starts something rather than doing it at
+        // once, so it stays in every translation.
+        ("zh", "pin_top") => "窗口置顶…（再点一下目标窗口）",
+        ("zh-Hant", "pin_top") => "視窗置頂…（再點一下目標視窗）",
+        ("ja", "pin_top") => "ウィンドウを最前面に固定…（次に対象をクリック）",
+        ("ko", "pin_top") => "창을 항상 위에 고정…(대상 창 클릭)",
+        ("ru", "pin_top") => "Поверх всех окон… (затем щёлкните окно)",
+        ("uk", "pin_top") => "Поверх усіх вікон… (потім клацніть вікно)",
+        ("pt-BR", "pin_top") => "Fixar janela no topo… (clique na janela)",
+        (_, "pin_top") => "Keep a window on top… (then click it)",
         _ => "?",
     }
 }

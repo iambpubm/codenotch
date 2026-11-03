@@ -76,6 +76,9 @@ pub fn get_system_look() -> SystemLook {
 
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
+    // Release anything the user pinned first: once this app is gone there is nothing left to
+    // un-pin it with.
+    crate::pintop::shutdown();
     app.exit(0);
 }
 

@@ -70,10 +70,13 @@ fn build_menu_from(app: &AppHandle, lang: &str, lines: &[(String, String, bool)]
                 .build(app)?,
         );
     }
+    let pin = MenuItemBuilder::with_id("pin_top", tr(&lang, "pin_top")).build(app)?;
     let refresh = MenuItemBuilder::with_id("refresh", tr(&lang, "refresh_all")).build(app)?;
     let settings = MenuItemBuilder::with_id("settings", tr(&lang, "settings")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", tr(&lang, "quit_app")).build(app)?;
-    let mut menu = MenuBuilder::new(app);
+    // The pin item sits on its own at the top: it is the only entry that changes something
+    // outside Codenotch, and burying it between the readings would make it look like one of them.
+    let mut menu = MenuBuilder::new(app).item(&pin).separator();
     for item in &items {
         menu = menu.item(item);
     }
@@ -162,9 +165,15 @@ fn handle(app: &AppHandle, id: &str) {
         return;
     }
     match id {
+        "pin_top" => crate::pintop::begin_pick(),
         "refresh" => crate::refresh_all(app),
         "settings" => crate::settings_window::open(app),
-        "quit" => app.exit(0),
+        "quit" => {
+            // Before the process goes: a window left topmost with no frame around it cannot be
+            // released from anywhere in this app again.
+            crate::pintop::shutdown();
+            app.exit(0);
+        }
         _ => {}
     }
 }
