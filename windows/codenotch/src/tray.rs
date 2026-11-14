@@ -14,6 +14,10 @@ const TOUCH_ID: &str = "touch";
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_menu(app)?;
+    // The three icons are about to get identities of their own (see `own_identity`), so the
+    // windows that exist before any of them is built are the baseline the difference is taken
+    // against.
+    let mut claimed = existing_ids();
     let mut builder = TrayIconBuilder::with_id("main");
     // Windows does not tint tray icons and the monochrome outline vanishes on a dark taskbar, so
     // the app's own mark is the icon. trayicon::app_mark explains why at length.
@@ -26,8 +30,119 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, ev| handle(app, ev.id().as_ref()))
         .build(app)?;
-    setup_pin(app)?;
-    setup_touch(app)?;
+    own_identity(app, &mut claimed, "");
+    setup_pin(app, &mut claimed)?;
+    setup_touch(app, &mut claimed)?;
+    Ok(())
+}
+
+/// The AppUserModelID a tray window carries, given the process's own id and the icon's suffix.
+///
+/// An empty suffix means "the application itself", which is what the main icon keeps: a tray host
+/// that already remembers `com.immidi.codenotch` must go on meaning the same icon.
+fn identity_of(base: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}.{suffix}")
+    }
+}
+
+/// Gives the tray window that was just created an AppUserModelID of its own.
+///
+/// Windows decides which application a tray icon belongs to from the AppUserModelID of the hidden
+/// window behind it, and a process that never sets one leaves all three of its icons sharing the
+/// application's single id. A tray host that groups by application — MyDockFinder does, and reads
+/// the id with `SHGetPropertyStoreForWindow` — then cannot be asked to show two of the three:
+/// switching the application off switches all of them off, and the icons it was told to keep
+/// disappear again the next time it reads its settings. One id per window turns the three into
+/// three separate entries, so the pin and the touch switch can be kept while the app's own icon
+/// is dropped.
+///
+/// `claimed` is the set of tray windows seen so far: whatever is in the process after this call
+/// but not before it is the window this icon just created. Taking the difference rather than an
+/// index keeps it correct no matter what order the builder registers its windows in.
+#[cfg(windows)]
+fn own_identity(app: &AppHandle, claimed: &mut Vec<isize>, suffix: &str) {
+    let base = app.config().identifier.clone();
+    let aumid = identity_of(&base, suffix);
+    for hwnd in tray_windows().into_iter().filter(|h| !claimed.contains(h)) {
+        claimed.push(hwnd);
+        if let Err(why) = set_aumid(hwnd, &aumid) {
+            crate::applog(&format!("tray: could not name the {aumid} icon ({why})"));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn own_identity(_app: &AppHandle, _claimed: &mut Vec<isize>, _suffix: &str) {}
+
+/// The tray windows that already exist, so the ones built afterwards can be told apart.
+#[cfg(windows)]
+fn existing_ids() -> Vec<isize> {
+    tray_windows()
+}
+
+#[cfg(not(windows))]
+fn existing_ids() -> Vec<isize> {
+    Vec::new()
+}
+
+/// Every `tray_icon_app` window this process owns — one per tray icon, created by tray-icon.
+#[cfg(windows)]
+fn tray_windows() -> Vec<isize> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowThreadProcessId};
+
+    // Body is an `unsafe fn`, so the calls below are already in an unsafe context: wrapping them
+    // in `unsafe {}` again would only draw an `unused_unsafe` warning.
+    unsafe extern "system" fn visit(hwnd: HWND, out: LPARAM) -> BOOL {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+        if pid != windows::Win32::System::Threading::GetCurrentProcessId() {
+            return BOOL(1);
+        }
+        let mut name = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut name);
+        if len > 0 && String::from_utf16_lossy(&name[..len as usize]) == "tray_icon_app" {
+            let list = &mut *(out.0 as *mut Vec<isize>);
+            list.push(hwnd.0 as isize);
+        }
+        BOOL(1)
+    }
+
+    let mut found: Vec<isize> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut _ as isize));
+    }
+    found
+}
+
+/// The property key `PKEY_AppUserModel_ID`. Spelled out rather than taken from the `windows`
+/// crate's `EnhancedStorage` module, which would pull in a whole feature for one constant.
+#[cfg(windows)]
+const PKEY_APP_USER_MODEL_ID: windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY =
+    windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+        pid: 5,
+    };
+
+/// Writes one AppUserModelID onto one window.
+///
+/// The value goes in as a `BSTR`; the shell converts it to the `VT_LPWSTR` the key is defined as,
+/// which is what a read finds afterwards (measured, not assumed).
+#[cfg(windows)]
+fn set_aumid(hwnd: isize, aumid: &str) -> windows::core::Result<()> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
+
+    unsafe {
+        let store: IPropertyStore =
+            SHGetPropertyStoreForWindow(HWND(hwnd as *mut core::ffi::c_void))?;
+        let value = windows::core::PROPVARIANT::from(aumid);
+        store.SetValue(&PKEY_APP_USER_MODEL_ID, &value)?;
+        store.Commit()?;
+    }
     Ok(())
 }
 
@@ -37,7 +152,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// It is separate from the app's own icon on purpose. Pinning another application's window is the
 /// one thing in Codenotch that reaches outside Codenotch, and it wants a target you can hit
 /// without opening a menu and reading it.
-fn setup_pin(app: &AppHandle) -> tauri::Result<()> {
+fn setup_pin(app: &AppHandle, claimed: &mut Vec<isize>) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id(PIN_ID);
     if let Some(icon) = crate::trayicon::pin_mark() {
         builder = builder.icon(icon);
@@ -66,6 +181,7 @@ fn setup_pin(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    own_identity(app, claimed, "pin");
     Ok(())
 }
 
@@ -81,7 +197,7 @@ static TOUCH_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 /// is the moment a palm on the glass is dragging the pointer about, and that is not a moment to open
 /// a menu and read it first. The right-click menu names the switch ("Turn the touch screen off"), so
 /// the icon does not have to be memorised.
-fn setup_touch(app: &AppHandle) -> tauri::Result<()> {
+fn setup_touch(app: &AppHandle, claimed: &mut Vec<isize>) -> tauri::Result<()> {
     let _ = TOUCH_APP.set(app.clone());
     let mut builder = TrayIconBuilder::with_id(TOUCH_ID);
     if let Some(icon) = crate::trayicon::touch_mark(crate::touch::read().disabled) {
@@ -112,6 +228,7 @@ fn setup_touch(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    own_identity(app, claimed, "touch");
     Ok(())
 }
 
@@ -394,5 +511,36 @@ fn handle(app: &AppHandle, id: &str) {
             app.exit(0);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The three icons have to end up as three different applications, or a tray host can only
+    /// switch them together — which is the bug this exists to fix.
+    #[test]
+    fn each_icon_gets_its_own_identity() {
+        let base = "com.immidi.codenotch";
+        assert_eq!(identity_of(base, ""), base, "the main icon keeps the application's own id");
+        assert_eq!(identity_of(base, "pin"), "com.immidi.codenotch.pin");
+        assert_eq!(identity_of(base, "touch"), "com.immidi.codenotch.touch");
+        // Distinct, which is the whole point: a host that groups by id must see three of them.
+        let all = [identity_of(base, ""), identity_of(base, "pin"), identity_of(base, "touch")];
+        assert_eq!(all.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+    }
+
+    /// The key is written out by hand so the `windows` crate's `EnhancedStorage` feature is not
+    /// dragged in for one constant. A wrong pid would quietly write to another property, and the
+    /// write would still report success — so it is pinned against the crate's own definition.
+    #[cfg(windows)]
+    #[test]
+    fn the_property_key_is_pkey_appusermodel_id() {
+        assert_eq!(PKEY_APP_USER_MODEL_ID.pid, 5);
+        assert_eq!(
+            PKEY_APP_USER_MODEL_ID.fmtid,
+            windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3)
+        );
     }
 }
