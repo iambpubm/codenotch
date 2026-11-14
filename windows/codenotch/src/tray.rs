@@ -66,7 +66,13 @@ fn identity_of(base: &str, suffix: &str) -> String {
 fn own_identity(app: &AppHandle, claimed: &mut Vec<isize>, suffix: &str) {
     let base = app.config().identifier.clone();
     let aumid = identity_of(&base, suffix);
-    for hwnd in tray_windows().into_iter().filter(|h| !claimed.contains(h)) {
+    // Collected before the loop: `filter` holds `claimed` immutably for as long as the iterator
+    // lives, and the body pushes to it.
+    let fresh: Vec<isize> = tray_windows()
+        .into_iter()
+        .filter(|h| !claimed.contains(h))
+        .collect();
+    for hwnd in fresh {
         claimed.push(hwnd);
         if let Err(why) = set_aumid(hwnd, &aumid) {
             crate::applog(&format!("tray: could not name the {aumid} icon ({why})"));
